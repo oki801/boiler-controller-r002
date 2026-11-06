@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Boiler Dashboard (v3)</title>
+
+<!--
+  v3: az eredeti dashboard (dashboard.html) kinézete, folyékony mozgással.
+  Közös design-nyelv az LCD-vel (lásd docs/DESIGN.md): ugyanaz a gyűrű, jelölő, színezés és "víz" a tárcsában.
+
+  Ami ÚJ az eredetihez / a v2-höz képest:
+    1. A tárcsa belsejében "víz" hullámzik: a szintje a mért hőmérséklet, a színe a hőmérséklet árnyalata.
+    2. Minden érték folyékonyan fut át az újra (hőmérséklet, gyűrű, jelölő, víz), nincs ugrálás.
+    3. Fűtéskor buborékok emelkednek és a láng villódzik; hibánál a gyűrű piros ütemben pulzál.
+    4. Oldalváltáskor lágy belépő animáció, a lábléc ikonmenüjében csúszó kiemelés.
+    5. A "kevesebb mozgás" rendszerbeállítás esetén az animációk kikapcsolnak.
+  Az adatkötés (mért hőmérséklet, célhőmérséklet, hálózatok, napló, hibák) ugyanaz, mint a v2-ben.
+-->
+
+<style>
+:root{
+    --bg:#0f172a;
+    --card:#1e293b;
+    --panel:#111827;
+    --track:#253142;
+    --mute:#cbd5e1;
+    --dim:#94a3b8;
+    --ok:#22c55e;
+    --bad:#ef4444;
+    --warn:#facc15;
+    --blue:#3b82f6;
+    --hue:140;
+    --ease:cubic-bezier(.2,.8,.2,1);
+}
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
+
+body{
+    background:
+        radial-gradient(900px 420px at 50% -120px,#1d2b4a 0%,transparent 70%),
+        var(--bg);
+    font-family:Segoe UI,system-ui,sans-serif;
+    color:white;
+    display:flex;
+    justify-content:center;
+    padding:20px;
+    min-height:100vh;
+}
+
+.app{
+    width:100%;
+    max-width:430px;
+}
+
+.page{
+    display:none;
+}
+
+.page.active{
+    display:block;
+    animation:pageIn .45s var(--ease) both;
+}
+
+@keyframes pageIn{
+    from{opacity:0;transform:translateY(14px) scale(.985);}
+    to{opacity:1;transform:none;}
+}
+
+.card{
+    background:linear-gradient(180deg,#223048,var(--card));
+    padding:20px;
+    border-radius:30px;
+    box-shadow:0 10px 30px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.05);
+}
+
+/* ===== tárcsa ===== */
+.thermostat{
+    width:300px;
+    height:300px;
+    margin:auto;
+    border-radius:50%;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    padding:12px;
+    position:relative;
+    background:conic-gradient(#4b5563 0deg,#4b5563 360deg);
+    box-shadow:
+        0 0 26px hsl(var(--hue) 90% 55% / .28),
+        inset 0 0 10px rgba(255,255,255,.08);
+    transition:box-shadow .6s var(--ease);
+}
+
+.thermostat.off{
+    box-shadow:0 0 20px rgba(255,255,255,.05), inset 0 0 10px rgba(255,255,255,.08);
+}
+
+.thermostat.fault{
+    animation:faultPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes faultPulse{
+    50%{box-shadow:0 0 38px rgba(239,68,68,.7), inset 0 0 10px rgba(255,255,255,.08);}
+}
+
+.marker{
+    position:absolute;
+    top:0;
+    left:calc(50% - 2px);
+    width:4px;
+    height:16px;
+    border-radius:2px;
+    background:#fff;
+    box-shadow:0 0 8px rgba(255,255,255,.7);
+    transform-origin:50% 150px;
+    z-index:3;
+}
+
+.inner{
+    position:relative;
+    overflow:hidden;
+    width:246px;
+    height:246px;
+    border-radius:50%;
+    background:linear-gradient(180deg,#1b2434,#111827);
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    align-items:center;
+    box-shadow:
+        inset 0 2px 10px rgba(255,255,255,.05),
+        0 2px 20px rgba(0,0,0,.4);
+}
+
+/* "víz" a tárcsában: szintje a hőmérséklet, árnyalata a hőmérséklet színe */
+.wave{
+    position:absolute;
+    inset:0;
+    width:100%;
+    height:100%;
+    z-index:0;
+}
+
+.wave path{
+    transform-box:fill-box;
+}
+
+.w1{
+    fill:hsl(var(--hue) 90% 55% / .30);
+    animation:drift 7s linear infinite;
+}
+
+.w2{
+    fill:hsl(var(--hue) 90% 60% / .20);
+    animation:drift 11s linear infinite reverse;
+}
+
+@keyframes drift{
+    from{transform:translateX(0);}
+    to{transform:translateX(-246px);}
+}
+
+.bubbles{
+    position:absolute;
+    inset:0;
+    z-index:1;
+    pointer-events:none;
+    opacity:0;
+    transition:opacity .6s;
+}
+
+.thermostat.heating .bubbles{
+    opacity:1;
+}
+
+.bubbles span{
+    position:absolute;
+    bottom:8px;
+    border-radius:50%;
+    background:rgba(255,255,255,.35);
+    animation:rise 3.6s ease-in infinite;
+}
+
+@keyframes rise{
+    0%{transform:translateY(0) scale(.6);opacity:0;}
+    15%{opacity:.8;}
+    100%{transform:translateY(-200px) scale(1.1);opacity:0;}
+}
+
+.content{
+    position:relative;
+    z-index:2;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    text-shadow:0 2px 12px rgba(0,0,0,.45);
+}
+
+.tempRow{
+    display:flex;
+    align-items:center;
+    gap:10px;
+}
+
+.temp{
+    font-size:65px;
+    font-weight:700;
+    font-variant-numeric:tabular-nums;
+    min-width:84px;
+    text-align:center;
+}
+
+.state{
+    min-width:50px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:42px;
+}
+
+.state.flame{
+    animation:flicker 1.1s ease-in-out infinite;
+    transform-origin:50% 90%;
+}
+
+@keyframes flicker{
+    0%,100%{transform:scale(1) rotate(-2deg);filter:brightness(1);}
+    35%{transform:scale(1.08,.95) rotate(2deg);filter:brightness(1.25);}
+    65%{transform:scale(.96,1.07) rotate(-1deg);filter:brightness(.95);}
+}
+
+.status{
+    margin-top:10px;
+    color:var(--mute);
+    text-align:center;
+    padding:0 18px;
+    transition:opacity .3s;
+}
+
+/* ===== csúszka ===== */
+.sliderRow{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    margin-top:22px;
+    color:var(--mute);
+    font-size:14px;
+}
+
+.sliderRow b{
+    font-size:18px;
+    color:#fff;
+    font-variant-numeric:tabular-nums;
+}
+
+.slider{
+    width:100%;
+    margin-top:10px;
+    appearance:none;
+    -webkit-appearance:none;
+    height:8px;
+    border-radius:10px;
+    background:linear-gradient(90deg,#2563eb,#22c55e,#facc15,#f97316,#ef4444);
+}
+
+.slider::-webkit-slider-thumb{
+    appearance:none;
+    -webkit-appearance:none;
+    width:24px;
+    height:24px;
+    border-radius:50%;
+    background:white;
+    cursor:pointer;
+    box-shadow:0 0 10px rgba(255,255,255,.5);
+    transition:transform .2s var(--ease), box-shadow .2s;
+}
+
+.slider::-moz-range-thumb{
+    width:24px;
+    height:24px;
+    border:none;
+    border-radius:50%;
+    background:white;
+    cursor:pointer;
+    box-shadow:0 0 10px rgba(255,255,255,.5);
+}
+
+.slider:active::-webkit-slider-thumb{
+    transform:scale(1.25);
+    box-shadow:0 0 18px rgba(255,255,255,.85);
+}
+
+/* ===== hálózatok és mérések ===== */
+.chips{
+    display:flex;
+    gap:8px;
+    margin-top:20px;
+}
+
+.chip{
+    flex:1;
+    background:var(--bg);
+    border-radius:14px;
+    padding:9px 4px;
+    text-align:center;
+    font-size:13px;
+    color:var(--dim);
+    border:2px solid transparent;
+    transition:border-color .5s, background .5s, color .5s, transform .5s var(--ease), box-shadow .5s;
+}
+
+.chip b{
+    display:block;
+    color:#e2e8f0;
+    font-size:14px;
+}
+
+.chip.on{
+    color:#fff;
+    transform:translateY(-2px);
+    background:#162033;
+}
+
+.dot{
+    display:inline-block;
+    width:9px;
+    height:9px;
+    border-radius:50%;
+    background:#475569;
+    margin-right:4px;
+    transition:background .4s, box-shadow .4s;
+}
+
+.dot.up{
+    background:var(--ok);
+    box-shadow:0 0 8px rgba(34,197,94,.7);
+}
+
+.readings{
+    display:flex;
+    justify-content:space-between;
+    margin-top:14px;
+    color:var(--mute);
+    font-size:14px;
+    font-variant-numeric:tabular-nums;
+}
+
+.note{
+    display:none;
+    margin-top:12px;
+    background:var(--bg);
+    border-radius:12px;
+    padding:10px;
+    font-size:14px;
+    color:var(--mute);
+}
+
+.note.show{
+    display:block;
+    animation:pageIn .4s var(--ease) both;
+}
+
+/* ===== lábléc ===== */
+.menu{
+    position:relative;
+    margin-top:16px;
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    background:var(--panel);
+    border-radius:18px;
+    padding:6px;
+    overflow:hidden;
+}
+
+.menu div{
+    position:relative;
+    z-index:1;
+    cursor:pointer;
+    font-size:26px;
+    text-align:center;
+    padding:9px 0;
+    transition:transform .35s var(--ease), filter .35s;
+    filter:grayscale(.7) opacity(.7);
+    user-select:none;
+}
+
+.menu div.cur{
+    transform:scale(1.18);
+    filter:none;
+}
+
+.pill{
+    position:absolute;
+    top:6px;
+    bottom:6px;
+    left:6px;
+    width:calc((100% - 12px)/4);
+    border-radius:13px;
+    background:#1f2b42;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.06);
+    transition:transform .45s var(--ease);
+}
+
+/* ===== élő ítemek ===== */
+.led{
+    width:28px;
+    height:28px;
+    border-radius:50%;
+    background:radial-gradient(circle at 35% 35%,#d8ffd8,#00ff66);
+    box-shadow:0 0 10px #00ff66,0 0 20px #00ff66,0 0 35px #00ff66;
+    animation:pulse 2s infinite;
+}
+
+@keyframes pulse{
+    50%{transform:scale(1.15);}
+}
+
+.setting{
+    margin-bottom:20px;
+}
+
+button{
+    border:none;
+    padding:12px 20px;
+    border-radius:12px;
+    font-size:16px;
+    color:white;
+    cursor:pointer;
+    transition:background .3s, transform .2s var(--ease);
+}
+
+button:active{
+    transform:scale(.96);
+}
+
+#saveBtn{
+    background:#3b82f6;
+}
+
+.logItem,
+.errorItem{
+    background:var(--bg);
+    padding:12px;
+    border-radius:12px;
+    margin-top:10px;
+    animation:pageIn .5s var(--ease) both;
+    animation-delay:calc(var(--i,0) * 45ms);
+}
+
+#demoBanner{
+    display:none;
+    margin-bottom:12px;
+    background:#78350f;
+    color:#fde68a;
+    border-radius:12px;
+    padding:10px;
+    font-size:14px;
+    text-align:center;
+}
+
+@media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{
+        animation:none !important;
+        transition:none !important;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<div class="app">
+
+<div id="demoBanner">Bemutató mód: az eszköz nem érhető el, mintaadatot látsz.</div>
+
+<div id="home" class="page active">
+
+<div class="card">
+
+<div id="ring" class="thermostat">
+
+<div id="marker" class="marker"></div>
+
+<div id="inner" class="inner">
+
+<svg class="wave" viewBox="0 0 246 246" aria-hidden="true">
+<defs><clipPath id="clipC"><circle cx="123" cy="123" r="123"/></clipPath></defs>
+<g clip-path="url(#clipC)">
+<g id="waveG">
+<path id="w2" class="w2"/>
+<path id="w1" class="w1"/>
+</g>
+</g>
+</svg>
+
+<div id="bubbles" class="bubbles" aria-hidden="true"></div>
+
+<div class="content">
+
+<div class="tempRow">
+
+<div id="tempText" class="temp">--</div>
+
+<div>°C</div>
+
+<div id="state" class="state">❔</div>
+
+</div>
+
+<div id="status" class="status">
+Kapcsolódás…
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<div class="sliderRow">
+<span>Célhőmérséklet</span>
+<b><span id="targetVal">55</span> °C</b>
+</div>
+
+<input
+id="tempSlider"
+class="slider"
+type="range"
+min="0"
+max="60"
+value="55"
+aria-label="Célhőmérséklet">
+
+<div id="chips" class="chips"></div>
+
+<div id="readings" class="readings"></div>
+
+<div id="guarNote" class="note">🛁 Garantált minimum aktív: a víz fürdéshez alkalmas hőmérsékletre melegszik estére.</div>
+
+</div>
+
+</div>
+
+<div id="log" class="page">
+
+<div class="card">
+<h2>📜 Napló</h2>
+
+<div id="logList">
+<div class="logItem">Betöltés…</div>
+</div>
+
+</div>
+
+</div>
+
+<div id="errors" class="page">
+
+<div class="card">
+<h2>⚠️ Hibák</h2>
+
+<div id="errList">
+<div class="errorItem">
+✅ Nincs aktív hiba
+</div>
+</div>
+
+</div>
+
+</div>
+
+<div id="settings" class="page">
+
+<div class="card">
+
+<h2>⚙️ Beállítások</h2>
+
+<div class="setting">
+
+<label>
+Hiszterézis:
+<span id="hystValue">2</span> °C
+</label>
+
+<input
+id="hystSlider"
+class="slider"
+type="range"
+min="0.5"
+max="10"
+step="0.5"
+value="2"
+aria-label="Hiszterézis">
+
+</div>
+
+<button id="saveBtn"
+onclick="saveSettings()">
+✅ Mentve
+</button>
+
+</div>
+
+</div>
+
+<div class="menu">
+<div id="pill" class="pill"></div>
+<div class="cur" role="button" aria-label="Főoldal" onclick="showPage('home')">🏠</div>
+<div role="button" aria-label="Napló" onclick="showPage('log')">📜</div>
+<div role="button" aria-label="Hibák" onclick="showPage('errors')">⚠️</div>
+<div role="button" aria-label="Beállítások" onclick="showPage('settings')">⚙️</div>
+</div>
+
+</div>
+
+<script>
+
+const PAGES=["home","log","errors","settings"];
+const reduced=window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ---------- oldalváltás + csúszó kiemelés ---------- */
+function showPage(page){
+    document.querySelectorAll(".page")
+    .forEach(p=>p.classList.remove("active"));
+
+    document.getElementById(page)
+    .classList.add("active");
+
+    const i=PAGES.indexOf(page);
+    document.getElementById("pill").style.transform=`translateX(${i*100}%)`;
+    document.querySelectorAll(".menu > div:not(.pill)")
+    .forEach((m,k)=>m.classList.toggle("cur",k===i));
+
+    if(page==="log") loadLog();
+    if(page==="errors") renderErrors();
+}
+
+const slider=document.getElementById("tempSlider");
+const hystSlider=document.getElementById("hystSlider");
+const tempText=document.getElementById("tempText");
+const stateEl=document.getElementById("state");
+const statusEl=document.getElementById("status");
+const ring=document.getElementById("ring");
+const inner=document.getElementById("inner");
+const saveBtn=document.getElementById("saveBtn");
+
+/* ---------- adatok ---------- */
+const SRC_COL=["#facc15","#60a5fa","#d946ef"];
+const ERR={
+    E01:"DS18B20 hőmérő hiba", E02:"PZEM mérő nem válaszol", E03:"Reteszelési sértés (kritikus)",
+    E04:"Kontaktor nem húz be", E05:"Kontaktor nem enged el (kritikus)", E06:"Feszültség a tartományon kívül",
+    E07:"Túlhőmérséklet", E08:"WiFi/MQTT kiesés", E09:"Nincs érvényes idő (NTP)", E10:"Gyakori újraindulás",
+    E11:"Kevés a tárhely", E12:"Hibás konfiguráció", E13:"Túl gyakori kapcsolgatás", E14:"Nincs használható hálózat",
+    E15:"Vízkő/üledék gyanú", E16:"Fűtőelem teljesítménye csökken"
+};
+const CRIT=["E03","E05","E07"];
+
+let last=null, demo=false, dirtyTarget=false, dirtyHyst=false, firstLoad=true;
+
+/* bemutató mód: lassú fűtési ciklus, hogy a mozgás látszódjon */
+const mock={t:34, phase:"heating", hold:0};
+function mockData(){
+    if(mock.phase==="heating"){ mock.t+=0.9; if(mock.t>=55){ mock.t=55.4; mock.phase="reached"; mock.hold=5; } }
+    else if(mock.phase==="reached"){ if(--mock.hold<=0) mock.phase="cooling"; }
+    else { mock.t-=0.35; if(mock.t<=53){ mock.phase="heating"; } }
+    const heat=mock.phase==="heating"?"heating":(mock.phase==="reached"?"reached":"waiting");
+    return {
+        state:{fsm:"ACTIVE",active:heat==="heating"?2:0,mode:"auto",manual_bypass:false,fault:null,errors:[],guarantee:false,
+               heat,target:55,hyst:2,pres:[true,true,false],
+               src:[{capped:false,blocked:false},{capped:false,blocked:false},{capped:false,blocked:false}]},
+        tele:{temp:mock.t,p:heat==="heating"?2980:0,v:231.2,i:heat==="heating"?12.9:0},
+        names:["Solar","Hálózat","H tarifa"]
+    };
+}
+
+async function getStatus(){
+    try{
+        const r=await fetch("/api/status",{cache:"no-store"});
+        if(!r.ok) throw new Error(r.status);
+        demo=false;
+        return await r.json();
+    }catch(e){
+        demo=true;
+        return mockData();
+    }
+}
+
+async function sendConfig(body){
+    if(demo) return true;
+    const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    return r.ok;
+}
+
+/* ---------- folyékony megjelenítés ---------- */
+const W=246;
+const hueOf=t=>Math.max(0,220-(t/60)*220);          // az eredeti colorFromTemp
+const V={temp:0,target:55};                         // a MEGJELENÍTETT (átfutó) értékek
+const goal={temp:0,hasTemp:false,target:55,off:false,view:null};
+let raf=0,lastT=0;
+
+function wavePath(amp,len,phase){
+    let d=`M0 ${amp+4}`;
+    for(let x=0;x<=W*2;x+=6) d+=` L${x} ${(amp+4+amp*Math.sin(x/len*2*Math.PI+phase)).toFixed(1)}`;
+    return d+` L${W*2} ${W*2} L0 ${W*2} Z`;
+}
+document.getElementById("w1").setAttribute("d",wavePath(7,W/2,0));
+document.getElementById("w2").setAttribute("d",wavePath(5,W/3,1.7));
+
+/* buborékok (fűtéskor emelkednek) */
+(function(){
+    const box=document.getElementById("bubbles");
+    for(let i=0;i<8;i++){
+        const s=document.createElement("span");
+        const size=4+Math.random()*7;
+        s.style.cssText=`left:${18+Math.random()*64}%;width:${size}px;height:${size}px;animation-delay:${(Math.random()*3.6).toFixed(2)}s;animation-duration:${(3+Math.random()*2).toFixed(2)}s`;
+        box.appendChild(s);
+    }
+})();
+
+function render(){
+    const marker=document.getElementById("marker");
+    const wave=document.getElementById("waveG");
+
+    marker.style.display=goal.off?"none":"block";
+    marker.style.transform=`rotate(${Math.min(360,(V.target/60)*360)}deg)`;
+    document.getElementById("targetVal").textContent=Math.round(slider.value);
+
+    if(goal.off){
+        tempText.textContent="⏻";
+        ring.style.background="conic-gradient(#4b5563 0deg,#4b5563 360deg)";
+        ring.classList.add("off");
+        wave.style.transform=`translateY(${W}px)`;
+        return;
+    }
+    ring.classList.remove("off");
+
+    const t=goal.hasTemp?V.temp:0;
+    const h=hueOf(t);
+    const color=`hsl(${h},90%,55%)`;
+    const angle=goal.hasTemp?Math.max(0,Math.min(360,(t/60)*360)):0;
+
+    tempText.textContent=goal.hasTemp?Math.round(t):"--";
+    ring.style.setProperty("--hue",h);
+    inner.style.setProperty("--hue",h);
+    ring.style.background=
+        `conic-gradient(${color} 0deg,${color} ${angle}deg,#253142 ${angle}deg,#253142 360deg)`;
+
+    /* víz szintje: 0 °C alul, 60 °C felül (mint a gyűrű skálája) */
+    const frac=goal.hasTemp?Math.max(.04,Math.min(.98,t/60)):.04;
+    wave.style.transform=`translateY(${((1-frac)*W-6).toFixed(1)}px)`;
+}
+
+function frame(now){
+    const dt=Math.min(.05,(now-lastT)/1000)||0.016;
+    lastT=now;
+    const kT=reduced?1:1-Math.exp(-dt/0.45);
+    const kG=reduced?1:1-Math.exp(-dt/0.16);
+    V.temp+=(goal.temp-V.temp)*kT;
+    V.target+=(goal.target-V.target)*kG;
+    render();
+    if(Math.abs(goal.temp-V.temp)>0.02||Math.abs(goal.target-V.target)>0.02) raf=requestAnimationFrame(frame);
+    else raf=0;
+}
+
+function kick(){
+    if(reduced){ V.temp=goal.temp; V.target=goal.target; render(); return; }
+    if(!raf){ lastT=performance.now(); raf=requestAnimationFrame(frame); }
+}
+
+/* állapot az eszköz adataiból */
+function phaseView(d){
+    if(!d) return {icon:"❔",text:"Nincs kapcsolat",cls:""};
+    const s=d.state;
+    const crit=(s.errors||[]).find(c=>CRIT.includes(c));
+    if(s.fsm==="FAULT"||crit) return {icon:"⚠️",text:"Hiba: "+(s.fault||crit),cls:"fault"};
+    if(s.manual_bypass) return {icon:"🖐️",text:"Kézi üzem",cls:""};
+    if(s.mode==="off"||s.target===0) return {icon:"",text:"Kikapcsolva",cls:"off"};
+    if(s.heat==="heating" && s.active===0) return {icon:"⏳",text:"Fűtene, de nincs használható hálózat",cls:""};
+    if(s.heat==="heating") return {icon:"♨️",text:"Felfűtés folyamatban",cls:"heating"};
+    if(s.heat==="waiting") return {icon:'<div class="led"></div>',text:"Várakozás",cls:""};
+    if(s.heat==="reached") return {icon:"😊",text:"Hőfok rendben",cls:""};
+    return {icon:"❔",text:"Nincs hőmérő adat",cls:""};
+}
+
+function updateDisplay(){
+    const d=last;
+    const target=parseFloat(slider.value);
+    const view=phaseView(d);
+    const temp=(d && d.tele.temp!==null && d.tele.temp!==undefined)?d.tele.temp:null;
+
+    goal.off=(view.cls==="off"||target===0);
+    goal.target=target;
+    goal.hasTemp=temp!==null;
+    if(temp!==null){
+        if(firstLoad) V.temp=Math.max(0,temp-8);          // az első adatnál "feltölt" az érték
+        goal.temp=temp;
+    }
+
+    statusEl.textContent=view.text;
+    if(goal.off) stateEl.innerHTML="";
+    else stateEl.innerHTML=view.icon;
+    stateEl.classList.toggle("flame",view.cls==="heating");
+    ring.classList.toggle("heating",view.cls==="heating");
+    ring.classList.toggle("fault",view.cls==="fault");
+
+    if(d){
+        const names=d.names||["1","2","3"];
+        document.getElementById("chips").innerHTML=[0,1,2].map(i=>{
+            const on=d.state.active===i+1;
+            const up=d.state.pres[i];
+            const s=d.state.src[i]||{};
+            const note=on?"bojleren":(!up?"nincs fesz.":(s.capped?"hőfokhatár":(s.blocked?"blokkolva":"jelen van")));
+            return `<div class="chip${on?" on":""}" style="${on?"border-color:"+SRC_COL[i]+";box-shadow:0 0 14px "+SRC_COL[i]+"55":""}">
+                <b><span class="dot${up?" up":""}"></span>${names[i]}</b>${note}</div>`;
+        }).join("");
+
+        const t=d.tele;
+        document.getElementById("readings").innerHTML=
+            `<span>${temp===null?"--":temp.toFixed(1)} °C</span><span>${Math.round(t.p||0)} W</span>`+
+            `<span>${Math.round(t.v||0)} V</span><span>${(t.i||0).toFixed(1)} A</span>`;
+        document.getElementById("guarNote").classList.toggle("show",!!d.state.guarantee);
+    }
+    kick();
+}
+
+function markDirty(){
+    saveBtn.style.background="#22c55e";
+    saveBtn.innerHTML="💾 Mentés";
+}
+
+slider.addEventListener("input",()=>{ dirtyTarget=true; markDirty(); updateDisplay(); });
+
+hystSlider.addEventListener("input",()=>{
+    dirtyHyst=true;
+    document.getElementById("hystValue").innerHTML=hystSlider.value;
+    markDirty();
+});
+
+async function saveSettings(){
+    const body={};
+    if(dirtyTarget) body.target=parseFloat(slider.value);
+    if(dirtyHyst) body.hyst=parseFloat(hystSlider.value);
+    if(Object.keys(body).length===0){
+        saveBtn.style.background="#3b82f6";
+        saveBtn.innerHTML="✅ Mentve";
+        return;
+    }
+    try{
+        const ok=await sendConfig(body);
+        if(!ok) throw new Error("elutasítva");
+        dirtyTarget=false; dirtyHyst=false;
+        saveBtn.style.background="#3b82f6";
+        saveBtn.innerHTML="✅ Mentve";
+    }catch(e){
+        saveBtn.style.background="#ef4444";
+        saveBtn.innerHTML="⚠️ Nem sikerült";
+    }
+}
+
+/* hibák és napló */
+function renderErrors(){
+    const errs=(last && last.state.errors)||[];
+    const list=document.getElementById("errList");
+    list.innerHTML=errs.length
+        ? errs.map((c,i)=>`<div class="errorItem" style="--i:${i}">⚠️ ${c}: ${ERR[c]||""}</div>`).join("")
+        : `<div class="errorItem">✅ Nincs aktív hiba</div>`;
+}
+
+async function loadLog(){
+    const list=document.getElementById("logList");
+    if(demo){
+        list.innerHTML=`<div class="logItem" style="--i:0">♨️ Fűtés elindult</div><div class="logItem" style="--i:1">😊 Célhőmérséklet elérve</div>`;
+        return;
+    }
+    try{
+        const r=await fetch("/api/events",{cache:"no-store"});
+        const lines=(await r.text()).trim().split("\n").slice(1).reverse()
+            .filter(l=>!l.includes(",STATE,")).slice(0,20);
+        list.innerHTML=lines.length?lines.map((l,i)=>{
+            const c=l.split(",");
+            const when=(c[0]||"").replace("T"," ").slice(5,16);
+            let icon="•",text=c.slice(6).join(",");
+            if(c[2]==="SWITCH"){icon="🔀";text=`Váltás: ${c[4]} → ${c[5]} (${c[6]||""})`;}
+            else if(c[2]==="ERROR"){icon="⚠️";text=`${c[3]} ${c.slice(6).join(",")}`;}
+            else if(c[2]==="CMD"){icon="⌨️";}
+            return `<div class="logItem" style="--i:${i}">${icon} ${text}<br><small style="color:#94a3b8">${when}</small></div>`;
+        }).join(""):`<div class="logItem">Még nincs esemény</div>`;
+    }catch(e){
+        list.innerHTML=`<div class="logItem">A napló nem érhető el</div>`;
+    }
+}
+
+/* frissítés */
+let timer=0;
+async function poll(){
+    last=await getStatus();
+    document.getElementById("demoBanner").style.display=demo?"block":"none";
+
+    if(firstLoad || !dirtyTarget) slider.value=last.state.target;
+    if(firstLoad || !dirtyHyst){
+        hystSlider.value=last.state.hyst;
+        document.getElementById("hystValue").innerHTML=last.state.hyst;
+    }
+    updateDisplay();
+    firstLoad=false;
+    if(document.getElementById("errors").classList.contains("active")) renderErrors();
+
+    clearTimeout(timer);
+    timer=setTimeout(poll,demo?1000:2000);
+}
+
+poll();
+
+</script>
+
+</body>
+</html>

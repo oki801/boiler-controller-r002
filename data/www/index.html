@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bojlervezérlő</title>
+<style>
+  :root {
+    --bg:#e6eaee; --panel:#f6f8fa; --ink:#14222b; --mute:#5c6b76; --line:#c4ccd3;
+    --s1:#b7791f; --s2:#1f5f99; --s3:#7a3e7a;
+    --ok:#1e7a4c; --bad:#b3261e; --warn:#a15c00;
+    --r:6px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#10181e; --panel:#19242c; --ink:#e4ebf0; --mute:#8fa1ad; --line:#2f3f4a;
+            --s1:#e0a64a; --s2:#5fa3e0; --s3:#c47fc4; --ok:#4cc38a; --bad:#ff7a70; --warn:#e6a23c; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; font-variant-numeric:tabular-nums; }
+  main { max-width:720px; margin:0 auto; padding:12px 12px 60px; }
+  h1 { font-size:1.05rem; margin:0; font-weight:650; }
+  h2 { font-size:1rem; margin:0 0 8px; font-weight:650; }
+  header { display:flex; justify-content:space-between; align-items:baseline; gap:8px; padding:6px 2px 10px; }
+  #clock { color:var(--mute); font-size:.85rem; }
+  nav { display:flex; gap:4px; margin-bottom:10px; border-bottom:1px solid var(--line); }
+  nav button { background:none; border:0; border-bottom:3px solid transparent; padding:10px 12px; font:inherit;
+               color:var(--mute); cursor:pointer; }
+  nav button[aria-selected=true] { color:var(--ink); border-bottom-color:var(--ink); font-weight:600; }
+  section[hidden] { display:none; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:12px; margin-bottom:10px; }
+  .banner { padding:10px 12px; border-radius:var(--r); margin-bottom:10px; border:1px solid; display:none; }
+  .banner.show { display:block; }
+  .banner.bad { color:var(--bad); border-color:var(--bad); }
+  .banner.warn { color:var(--warn); border-color:var(--warn); }
+  .banner.info { color:var(--ink); border-color:var(--line); background:var(--panel); }
+  .state { font-size:1.15rem; font-weight:650; margin:2px 0 8px; }
+
+  /* egyvonalas kapcsolási rajz: az aktív ág vastag, színes */
+  svg.diag { width:100%; height:auto; display:block; }
+  .wire { fill:none; stroke:var(--line); stroke-width:2; stroke-dasharray:5 4; }
+  .wire.on { stroke-width:6; stroke-dasharray:none; }
+  .node { fill:var(--panel); stroke:var(--line); stroke-width:2; }
+  .node.here { stroke-width:3; }
+  .lbl { fill:var(--ink); font-size:12px; }
+  .sub { fill:var(--mute); font-size:11px; }
+  .boiler { fill:var(--panel); stroke:var(--ink); stroke-width:2; }
+
+  .readings { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:8px; }
+  .readings div { text-align:center; }
+  .readings b { display:block; font-size:1.35rem; font-weight:650; }
+  .readings span { color:var(--mute); font-size:.8rem; }
+
+  .src { display:grid; grid-template-columns:10px 1fr auto; gap:4px 10px; align-items:center; padding:8px 0; border-top:1px solid var(--line); }
+  .src:first-of-type { border-top:0; }
+  .chip { width:10px; height:100%; min-height:34px; border-radius:3px; }
+  .src small { color:var(--mute); display:block; }
+  .tag { font-size:.8rem; padding:2px 8px; border-radius:99px; border:1px solid var(--line); color:var(--mute); white-space:nowrap; }
+  .tag.ok { color:var(--ok); border-color:var(--ok); }
+  .tag.bad { color:var(--bad); border-color:var(--bad); }
+
+  .seg { display:flex; border:1px solid var(--line); border-radius:var(--r); overflow:hidden; }
+  .seg button { flex:1; padding:12px 4px; background:var(--panel); border:0; border-right:1px solid var(--line); font:inherit; color:var(--ink); cursor:pointer; }
+  .seg button:last-child { border-right:0; }
+  .seg button[aria-pressed=true] { background:var(--ink); color:var(--bg); font-weight:600; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline:3px solid var(--s2); outline-offset:1px; }
+
+  label { display:block; font-size:.88rem; color:var(--mute); margin:8px 0 2px; }
+  input[type=text], input[type=password], input[type=number], input[type=time], select {
+    width:100%; padding:9px 10px; font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:var(--r); }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .days { display:flex; gap:4px; flex-wrap:wrap; margin-top:4px; }
+  .days label { display:flex; align-items:center; gap:4px; margin:0; color:var(--ink); padding:4px 8px; border:1px solid var(--line); border-radius:var(--r); }
+  .btn { padding:11px 16px; font:inherit; border-radius:var(--r); border:1px solid var(--ink); background:var(--ink); color:var(--bg); cursor:pointer; }
+  .btn.alt { background:none; color:var(--ink); }
+  .btn.danger { background:var(--bad); border-color:var(--bad); color:#fff; }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  pre { margin:0; font:12.5px/1.4 ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; word-break:break-all; max-height:320px; overflow:auto; }
+  a { color:var(--s2); }
+  #toast { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); background:var(--ink); color:var(--bg);
+           padding:10px 16px; border-radius:var(--r); opacity:0; pointer-events:none; transition:opacity .2s; }
+  #toast.show { opacity:1; }
+  @media (prefers-reduced-motion: reduce) { #toast { transition:none; } }
+</style>
+</head>
+<body>
+<main>
+  <header><h1 id="title">Bojlervezérlő</h1><span id="clock"></span></header>
+  <nav role="tablist">
+    <button role="tab" data-tab="home" aria-selected="true">Áttekintés</button>
+    <button role="tab" data-tab="cfg" aria-selected="false">Beállítások</button>
+    <button role="tab" data-tab="log" aria-selected="false">Napló</button>
+    <button role="tab" data-tab="sys" aria-selected="false">Rendszer</button>
+  </nav>
+
+  <div id="bn-creds" class="banner warn">Az alapértelmezett jelszó van használatban. Cseréld le a Beállítások fülön.</div>
+  <div id="bn-fault" class="banner bad"></div>
+  <div id="bn-guar" class="banner info">Garantált minimum aktív: a víz fürdéshez alkalmas hőmérsékletre melegszik estére.</div>
+
+  <!-- ÁTTEKINTÉS -->
+  <section id="tab-home">
+    <div class="panel">
+      <div class="state" id="stateText">Betöltés…</div>
+      <svg class="diag" viewBox="0 0 360 190" role="img" aria-label="Melyik hálózat van a bojlerre kapcsolva">
+        <g id="wires"></g>
+        <rect class="boiler" x="262" y="62" width="86" height="66" rx="6"/>
+        <text class="lbl" x="305" y="90" text-anchor="middle">Bojler</text>
+        <text class="sub" id="dgTemp" x="305" y="108" text-anchor="middle"></text>
+      </svg>
+      <div class="readings">
+        <div><b id="rTemp">–</b><span>°C</span></div>
+        <div><b id="rP">–</b><span>W</span></div>
+        <div><b id="rV">–</b><span>V</span></div>
+        <div><b id="rI">–</b><span>A</span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Hálózatok</h2>
+      <div id="srcList"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Üzemmód</h2>
+      <div class="seg" id="modeSeg">
+        <button data-m="auto">Automatikus</button>
+        <button data-m="force" data-f="1">1</button>
+        <button data-m="force" data-f="2">2</button>
+        <button data-m="force" data-f="3">3</button>
+        <button data-m="off">Ki</button>
+      </div>
+      <p class="sub" style="color:var(--mute);font-size:.85rem;margin:8px 0 0">A számok a kényszerített hálózatot jelölik. Újraindítás után az eszköz automatikus módban indul.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Fogyasztás</h2>
+      <div id="energy"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Elmúlt 24 óra</h2>
+      <svg class="diag" id="hist" viewBox="0 0 360 170" role="img" aria-label="Az elmúlt 24 óra hőmérséklete, teljesítménye és az aktív hálózat"></svg>
+      <p style="color:var(--mute);font-size:.82rem;margin:6px 0 2px">Vonal: vízhőmérséklet. Halvány terület: teljesítmény. Alsó sáv: melyik hálózat volt a bojleren.</p>
+      <div id="histSum" style="font-size:.9rem"></div>
+    </div>
+
+  </section>
+
+  <!-- BEÁLLÍTÁSOK -->
+  <section id="tab-cfg" hidden>
+    <div id="cfgForm"></div>
+    <div class="actions"><button class="btn" id="saveCfg">Mentés</button><button class="btn alt" id="reloadCfg">Visszaállítás</button></div>
+  </section>
+
+  <!-- NAPLÓ -->
+  <section id="tab-log" hidden>
+    <div class="panel"><h2>Mérési naplók</h2><div id="logFiles">Betöltés…</div></div>
+    <div class="panel"><h2>Legutóbbi események</h2><pre id="events">Betöltés…</pre></div>
+  </section>
+
+  <!-- RENDSZER -->
+  <section id="tab-sys" hidden>
+    <div class="panel"><h2>Állapot</h2><div id="sysInfo"></div>
+      <div class="actions"><button class="btn alt" id="ackBtn">Hiba nyugtázása</button><button class="btn danger" id="rebootBtn">Újraindítás</button></div></div>
+    <div class="panel"><h2>Vízkő- és fűtőelem-figyelés</h2>
+      <div id="trendInfo">Betöltés…</div>
+      <svg class="diag" id="trendChart" viewBox="0 0 360 110" role="img" aria-label="Wh/°C értékek a fűtési ciklusokra"></svg>
+      <p style="color:var(--mute);font-size:.82rem;margin:6px 0 0">A vízkő közvetlenül nem mérhető. A figyelés a tiszta fűtési ciklusokból két közvetett jelet követ: az effektív hőkapacitást (Wh/°C, az üledék csökkenti) és a 230 V-ra normalizált fűtőteljesítményt. Csak lassú változásra jó, a jelzés gyanú, nem diagnózis.</p>
+      <div class="actions"><button class="btn alt" id="trendReset">Alaphelyzet (vízkőmentesítés után)</button></div>
+    </div>
+    <div class="panel"><h2>Értesítés</h2><div id="notifyInfo"></div></div>
+    <div class="panel"><h2>Firmware frissítés</h2>
+      <label for="fw">Firmware (.bin)</label><input type="file" id="fw" accept=".bin">
+      <label for="fsimg">Fájlrendszer-kép (littlefs.bin)</label><input type="file" id="fsimg" accept=".bin">
+      <div class="actions"><button class="btn" id="upBtn">Feltöltés</button></div>
+      <p id="upMsg" style="color:var(--mute);font-size:.88rem"></p></div>
+  </section>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const COL = ['var(--s1)','var(--s2)','var(--s3)'];
+const FSM = { INIT:'Indul', SELFTEST:'Önteszt', IDLE:'Egyik hálózat sincs a bojlerre kapcsolva', DEAD_TIME:'Váltás: biztonsági várakozás',
+  CLOSING:'Kapcsolás…', ACTIVE:'Üzemel', OPENING:'Leválasztás…', MANUAL:'Kézi üzem: az S1 kapcsoló nem AUTO állásban van', FAULT:'Hiba' };
+const ERR = { E01:'DS18B20 hőmérő hiba', E02:'PZEM mérő nem válaszol', E03:'Reteszelési sértés', E04:'Kontaktor nem húz be',
+  E05:'Kontaktor nem enged el', E06:'Feszültség a tartományon kívül', E07:'Túlhőmérséklet', E08:'WiFi/MQTT kiesés',
+  E09:'Nincs érvényes idő (NTP)', E10:'Gyakori újraindulás', E11:'Kevés a tárhely', E12:'Hibás konfiguráció',
+  E13:'Túl gyakori kapcsolgatás', E14:'Nincs használható hálózat',
+  E15:'Vízkő/üledék gyanú', E16:'Fűtőelem teljesítménye csökken' };
+let last = null, cfg = null;
+
+function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2600); }
+async function j(url, opt) {
+  const r = await fetch(url, opt);
+  let body = null; try { body = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error((body && body.error) || ('Hiba: ' + r.status));
+  return body;
+}
+const post = (url, data) => j(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data || {}) });
+
+/* ---------- fülek ---------- */
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-selected', x === b));
+  ['home','cfg','log','sys'].forEach(t => $('#tab-' + t).hidden = t !== b.dataset.tab);
+  if (b.dataset.tab === 'cfg') loadCfg();
+  if (b.dataset.tab === 'log') loadLogs();
+});
+
+/* ---------- áttekintés ---------- */
+function drawWires(st, names) {
+  const ys = [34, 95, 156], jx = 210, jy = 95;
+  let h = '';
+  for (let i = 0; i < 3; i++) {
+    const on = st.active === i + 1, pres = st.pres[i];
+    const path = `M 120 ${ys[i]} H ${jx - 30} Q ${jx} ${ys[i]} ${jx} ${ys[i] + (jy - ys[i]) * .25} V ${jy}`;
+    h += `<path class="wire${on ? ' on' : ''}" d="${path}" style="${on ? 'stroke:' + COL[i] : ''}"/>`;
+    h += `<rect class="node${on ? ' here' : ''}" x="8" y="${ys[i] - 18}" width="112" height="36" rx="6" style="${on ? 'stroke:' + COL[i] : ''}"/>`;
+    h += `<circle cx="22" cy="${ys[i]}" r="5" fill="${pres ? 'var(--ok)' : 'var(--line)'}"/>`;
+    h += `<text class="lbl" x="34" y="${ys[i] - 2}">${esc(names[i])}</text>`;
+    h += `<text class="sub" x="34" y="${ys[i] + 12}">${pres ? (on ? 'kapcsolva' : 'jelen van') : 'nincs fesz.'}</text>`;
+  }
+  const act = st.active;
+  h += `<path class="wire${act ? ' on' : ''}" d="M ${jx} ${jy} H 262" style="${act ? 'stroke:' + COL[act - 1] : ''}"/>`;
+  $('#wires').innerHTML = h;
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const num = (x, d) => (x === null || x === undefined) ? '–' : Number(x).toFixed(d);
+
+function render(d) {
+  last = d;
+  const st = d.state, t = d.tele, names = d.names;
+  $('#title').textContent = 'Bojlervezérlő';
+  $('#clock').textContent = t.ts && !t.ts.startsWith('T+') ? t.ts.replace('T', ' ').slice(0, 16) + (st.time_est ? ' (becsült)' : '') : 'idő nincs szinkronban';
+
+  let line = FSM[st.fsm] || st.fsm;
+  if (st.fsm === 'ACTIVE') line = `Üzemel: ${names[st.active - 1]}`;
+  const HEAT = { heating:'felfűtés', waiting:'várakozás', reached:'cél elérve', off:'kikapcsolva', unknown:'nincs hőmérő adat' };
+  if (st.fsm === 'ACTIVE' || st.fsm === 'IDLE') line += ` · cél ${st.target} °C (${HEAT[st.heat] || ''})`;
+  $('#stateText').textContent = line;
+  drawWires(st, names);
+  $('#rTemp').textContent = num(t.temp, 1);
+  $('#dgTemp').textContent = t.temp === null ? '' : num(t.temp, 1) + ' °C';
+  $('#rP').textContent = num(t.p, 0);
+  $('#rV').textContent = num(t.v, 0);
+  $('#rI').textContent = num(t.i, 1);
+
+  $('#srcList').innerHTML = [0,1,2].map(i => {
+    const s = st.src[i];
+    let tag = '<span class="tag">várakozik</span>';
+    if (st.active === i + 1) tag = '<span class="tag ok">bojleren</span>';
+    else if (!st.pres[i]) tag = '<span class="tag">nincs feszültség</span>';
+    else if (s.blocked) tag = '<span class="tag bad">blokkolva</span>';
+    else if (!s.enabled) tag = '<span class="tag">letiltva</span>';
+    else if (s.capped) tag = '<span class="tag">hőfokhatár</span>';
+    else if (s.eligible) tag = '<span class="tag ok">használható</span>';
+    return `<div class="src"><div class="chip" style="background:${COL[i]}"></div>
+      <div>${esc(names[i])}<small>prioritás ${s.prio}${s.ext_ok ? ' · külső engedély: van' : ''}</small></div>${tag}</div>`;
+  }).join('');
+
+  document.querySelectorAll('#modeSeg button').forEach(b => {
+    const m = b.dataset.m, f = +b.dataset.f || 0;
+    b.setAttribute('aria-pressed', st.mode === m && (m !== 'force' || st.forced === f));
+  });
+
+  $('#energy').innerHTML = `<div class="readings" style="grid-template-columns:repeat(4,1fr);margin:0">
+    <div><b>${num(t.e, 1)}</b><span>összesen kWh</span></div>` +
+    [0,1,2].map(i => `<div><b style="color:${COL[i]}">${num(t.e_src[i], 1)}</b><span>${esc(names[i])}</span></div>`).join('') + '</div>';
+
+  const errs = st.errors || [];
+  const bf = $('#bn-fault');
+  if (st.fault || errs.length) {
+    bf.className = 'banner bad show';
+    const main = st.fault ? [st.fault] : [];
+    bf.textContent = [...new Set([...main, ...errs])].map(c => c + ': ' + (ERR[c] || '')).join(' · ') +
+      (st.latched ? ' (zárolt, nyugtázás kell)' : '');
+  } else bf.className = 'banner';
+  $('#bn-creds').classList.toggle('show', !!d.sys.default_creds);
+  $('#bn-guar').classList.toggle('show', !!st.guarantee);
+
+  $('#notifyInfo').textContent = d.sys.notify_on ? 'Bekapcsolva. Utolsó küldés: ' + d.sys.notify_status : 'Kikapcsolva (a Beállítások fülön kapcsolható be).';
+  $('#sysInfo').innerHTML = `<div>Firmware: ${esc(d.sys.fw)}</div><div>Üzemidő: ${Math.floor(t.up / 3600)} ó ${Math.floor(t.up % 3600 / 60)} p</div>
+    <div>Szabad memória: ${Math.round(t.heap / 1024)} kB · WiFi jel: ${t.rssi} dBm</div>
+    <div>WiFi: ${d.sys.wifi ? 'csatlakozva' : (d.sys.ap ? 'saját hozzáférési pont' : 'nincs')} · MQTT: ${d.sys.mqtt ? 'csatlakozva' : 'nincs'}</div>
+    <div>Tárhely: ${Math.round(d.sys.fs_used / 1024)} / ${Math.round(d.sys.fs_total / 1024)} kB</div>`;
+}
+async function poll() { try { render(await j('/api/status')); } catch (e) {} }
+setInterval(poll, 1000); poll();
+
+$('#modeSeg').onclick = async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  try {
+    await post('/api/control', b.dataset.m === 'force' ? { mode:'force', force:+b.dataset.f } : { mode:b.dataset.m });
+    toast('Üzemmód kérés elküldve'); poll();
+  } catch (x) { toast(x.message); }
+};
+$('#ackBtn').onclick = async () => { try { await post('/api/fault/ack'); toast('Nyugtázva'); } catch (x) { toast(x.message); } };
+$('#rebootBtn').onclick = async () => {
+  if (!confirm('Újraindítod az eszközt? A bojler néhány másodpercre lekapcsol.')) return;
+  try { await post('/api/reboot'); toast('Újraindul…'); } catch (x) { toast(x.message); }
+};
+
+/* ---------- 24 órás előzmény ---------- */
+function fmtDur(sec) {
+  const h = Math.floor(sec / 3600), m = Math.round(sec % 3600 / 60);
+  return h ? `${h} ó ${m} p` : `${m} p`;
+}
+function drawHist(h) {
+  const el = $('#hist');
+  if (!h.n) { el.innerHTML = '<text class="sub" x="180" y="85" text-anchor="middle">Még nincs adat (10 másodpercenként gyűlik)</text>'; $('#histSum').textContent = ''; return; }
+  const X0 = 34, W = 318, PY = 8, PH = 112, n = h.n, dx = n > 1 ? W / (n - 1) : 0;
+  const temps = h.t.filter(v => v !== null);
+  let tmin = temps.length ? Math.min(...temps) : 20, tmax = temps.length ? Math.max(...temps) : 60;
+  if (tmax - tmin < 5) { tmax += 2.5; tmin -= 2.5; }
+  const ty = v => PY + PH - (v - tmin) / (tmax - tmin) * PH;
+  const pmax = Math.max(500, ...h.p), py = v => PY + PH - v / pmax * PH * 0.55;
+  const X = i => X0 + i * dx, base = PY + PH;
+  let g = `<line x1="${X0}" y1="${base}" x2="${X0 + W}" y2="${base}" stroke="var(--line)"/>`;
+  // teljesítmény (halvány terület)
+  let pa = `M ${X(0)} ${base}`; h.p.forEach((v, i) => { pa += ` L ${X(i)} ${py(v)}`; }); pa += ` L ${X(n - 1)} ${base} Z`;
+  g += `<path d="${pa}" fill="var(--mute)" opacity=".2"/>`;
+  // hőmérséklet (vonal, a hiányzó mérésnél megszakad)
+  let d = '', pen = false;
+  h.t.forEach((v, i) => { if (v === null) { pen = false; return; } d += `${pen ? 'L' : 'M'}${X(i).toFixed(1)},${ty(v).toFixed(1)} `; pen = true; });
+  g += `<path d="${d}" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"/>`;
+  // aktív hálózat sáv
+  let i = 0;
+  while (i < n) {
+    let k = i; while (k + 1 < n && h.a[k + 1] === h.a[i]) k++;
+    const x1 = Math.max(X0, X(i) - dx / 2), x2 = Math.min(X0 + W, X(k) + dx / 2);
+    g += `<rect x="${x1.toFixed(1)}" y="128" width="${Math.max(1, x2 - x1).toFixed(1)}" height="12" fill="${h.a[i] ? COL[h.a[i] - 1] : 'var(--line)'}"/>`;
+    i = k + 1;
+  }
+  // feliratok
+  g += `<text class="sub" x="${X0 - 4}" y="${PY + 8}" text-anchor="end">${tmax.toFixed(0)}°</text>`;
+  g += `<text class="sub" x="${X0 - 4}" y="${base}" text-anchor="end">${tmin.toFixed(0)}°</text>`;
+  g += `<text class="sub" x="${X0}" y="158">−${fmtDur((n - 1) * h.step_s)}</text>`;
+  g += `<text class="sub" x="${X0 + W}" y="158" text-anchor="end">most</text>`;
+  el.innerHTML = g;
+  const names = last ? last.names : ['1', '2', '3'];
+  const tot = [0, 1, 2].map(k => h.a.filter(v => v === k + 1).length * h.step_s);
+  const parts = tot.map((s, k) => s ? `<span style="color:${COL[k]}">●</span> ${esc(names[k])}: ${fmtDur(s)}` : '').filter(Boolean);
+  const nowT = temps.length ? temps[temps.length - 1] : null;
+  $('#histSum').innerHTML = (nowT !== null ? `Most ${nowT.toFixed(1)} °C, legmagasabb ${Math.max(...temps).toFixed(1)} °C.<br>` : '') +
+    (parts.length ? 'Bojleren: ' + parts.join(' · ') : 'Ebben az időszakban nem volt hálózat a bojleren.');
+}
+async function loadHist() { try { drawHist(await j('/api/history?points=288')); } catch (e) {} }
+loadHist(); setInterval(loadHist, 60000);
+
+/* ---------- vízkő-figyelés ---------- */
+async function loadTrend() {
+  try {
+    const t = await j('/api/trend');
+    let h = `Ciklusok: ${t.runs}` + (t.base_ready ? '' : ` (alap: legalább ${t.need} kell)`) + (t.running ? ' · most fűt' : '') + '<br>';
+    if (t.base_ready) h += `Alap: ${t.base_wh.toFixed(0)} Wh/°C · ${t.base_p.toFixed(0)} W (230 V-on)<br>`;
+    if (t.ready) {
+      const bad = t.scale_suspect || t.element_suspect;
+      h += `Utolsó ciklusok mediánja: ${t.recent_wh.toFixed(0)} Wh/°C (${t.dev_pct >= 0 ? '+' : ''}${t.dev_pct.toFixed(1)}%) · ${t.recent_p.toFixed(0)} W (${t.p_dev_pct >= 0 ? '+' : ''}${t.p_dev_pct.toFixed(1)}%)<br>`;
+      h += `<b style="color:var(--${bad ? 'warn' : 'ok'})">${t.scale_suspect ? 'Vízkő/üledék gyanú: az effektív hőkapacitás csökken. ' : ''}${t.element_suspect ? 'A fűtőelem teljesítménye csökken. ' : ''}${bad ? '' : 'Nincs eltérés az alaphoz képest.'}</b>`;
+    } else if (t.base_ready) h += 'Az összehasonlításhoz még gyűlnek a ciklusok.';
+    $('#trendInfo').innerHTML = h;
+    // Wh/°C ciklusonként, az alap vonalával
+    const hist = t.history, n = hist.length, el = $('#trendChart');
+    if (!n) { el.innerHTML = '<text class="sub" x="180" y="55" text-anchor="middle">Még nincs értékelhető fűtési ciklus</text>'; return; }
+    const vals = hist.map(r => r.wh), lo = Math.min(...vals, t.base_wh || 1e9) * .9, hi = Math.max(...vals, t.base_wh || 0) * 1.1;
+    const X = i => 30 + (n > 1 ? i * 320 / (n - 1) : 160), Y = v => 95 - (v - lo) / (hi - lo || 1) * 80;
+    let g = '';
+    if (t.base_ready) g += `<line x1="30" x2="350" y1="${Y(t.base_wh)}" y2="${Y(t.base_wh)}" stroke="var(--mute)" stroke-dasharray="4 3"/>`;
+    g += `<path d="${vals.map((v, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1)).join(' ')}" fill="none" stroke="var(--ink)" stroke-width="2"/>`;
+    vals.forEach((v, i) => { g += `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="3" fill="var(--s2)"/>`; });
+    g += `<text class="sub" x="26" y="${Y(hi / 1.1)}" text-anchor="end">${(hi / 1.1).toFixed(0)}</text><text class="sub" x="26" y="${Y(lo / .9)}" text-anchor="end">${(lo / .9).toFixed(0)}</text>`;
+    el.innerHTML = g;
+  } catch (e) {}
+}
+$('#trendReset').onclick = async () => {
+  if (!confirm('Törlöd a mért alapot? Ezt vízkőmentesítés vagy fűtőelemcsere után tedd.')) return;
+  try { await post('/api/trend/reset'); toast('Alaphelyzet'); loadTrend(); } catch (x) { toast(x.message); }
+};
+loadTrend(); setInterval(loadTrend, 60000);
+
+/* ---------- beállítások ---------- */
+const DAYS = ['H','K','Sze','Cs','P','Szo','V'];
+const m2t = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+const t2m = t => { const [h, m] = (t || '00:00').split(':'); return (+h) * 60 + (+m); };
+
+async function loadCfg() {
+  try { cfg = await j('/api/config'); } catch (e) { toast(e.message); return; }
+  let h = '';
+  cfg.src.forEach((s, i) => {
+    h += `<div class="panel" data-i="${i}"><h2 style="color:${COL[i]}">Hálózat ${i + 1}</h2>
+      <label>Megnevezés</label><input type="text" data-k="name" maxlength="19" value="${esc(s.name)}">
+      <div class="row"><div><label>Prioritás (1 = legelőször)</label>
+        <select data-k="priority">${[1,2,3].map(p => `<option ${p === s.priority ? 'selected' : ''}>${p}</option>`).join('')}</select></div>
+        <div><label>Használható</label><select data-k="enabled"><option value="1" ${s.enabled ? 'selected' : ''}>igen</option><option value="0" ${!s.enabled ? 'selected' : ''}>nem</option></select></div></div>
+      <div class="row"><div><label>Ettől</label><input type="time" data-k="from" value="${m2t(s.from)}"></div>
+        <div><label>Eddig</label><input type="time" data-k="to" value="${m2t(s.to)}"></div></div>
+      <p style="color:var(--mute);font-size:.82rem;margin:4px 0 0">Azonos kezdő és záró idő: egész nap. Az éjfélen átnyúló sáv (pl. 22:00–06:00) megengedett.</p>
+      <div class="days">${DAYS.map((d, k) => `<label><input type="checkbox" data-d="${k}" ${(s.days >> k) & 1 ? 'checked' : ''}>${d}</label>`).join('')}</div>
+      <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" data-k="needExt" ${s.needExt ? 'checked' : ''}> Csak külső engedéllyel használható (pl. napelemes többlet)</label>
+      <label>Eddig a vízhőmérsékletig fűt ezen a hálózaton (°C)</label><input type="number" data-k="maxTemp" min="30" max="90" step="1" value="${s.maxTemp}">
+      <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" data-k="guarantee" ${s.guarantee ? 'checked' : ''}> Garantált minimum esetén akkor is használható, ha a beosztás vagy a külső engedély tiltja</label></div>`;
+  });
+  const T = cfg.timing, S = cfg.safety, G = cfg.guarantee, NT = cfg.notify, TR = cfg.trend;
+  h += `<div class="panel"><h2>Időzítések</h2><div class="row">
+    <div><label>Biztonsági várakozás váltáskor (s, min. 2)</label><input type="number" id="t_dead" min="2" step="0.5" value="${T.deadMs / 1000}"></div>
+    <div><label>Min. tartózkodás egy forráson (s)</label><input type="number" id="t_dwell" min="0" value="${T.minDwellMs / 1000}"></div>
+    <div><label>Új hálózat stabilitási ideje (s)</label><input type="number" id="t_on" min="0" value="${T.availOnMs / 1000}"></div>
+    <div><label>Kiesés-szűrés (s)</label><input type="number" id="t_off" min="0.2" step="0.1" value="${T.availOffMs / 1000}"></div></div>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="preempt" ${cfg.preempt ? 'checked' : ''}> Magasabb prioritású hálózat átveheti a bojlert</label></div>
+    <div class="panel"><h2>Célhőmérséklet</h2><div class="row">
+    <div><label>Célhőmérséklet (°C, 0 = kikapcsolva)</label><input type="number" id="t_target" min="0" max="75" step="1" value="${cfg.target}"></div>
+    <div><label>Hiszterézis (°C)</label><input type="number" id="t_hyst" min="0.5" max="10" step="0.5" value="${cfg.hyst}"></div></div>
+    <p style="color:var(--mute);font-size:.82rem;margin:6px 0 0">A vezérlő a célig fűt, a célnál lekapcsol, és cél mínusz hiszterézis alatt indul újra. A bojler saját termosztátját állítsd ennél magasabbra, az a tartalék.</p></div>
+    <div class="panel"><h2>Garantált minimum (fürdővíz)</h2>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="g_en" ${G.enabled ? 'checked' : ''}> Bekapcsolva</label>
+    <div class="row"><div><label>Ekkorra legyen meg</label><input type="time" id="g_ready" value="${m2t(G.readyAt)}"></div>
+    <div><label>Előfűtés (perc)</label><input type="number" id="g_lead" min="0" max="360" value="${G.lead}"></div>
+    <div><label>Eddig érvényes</label><input type="time" id="g_until" value="${m2t(G.until)}"></div>
+    <div><label>Minimum hőmérséklet (°C)</label><input type="number" id="g_min" min="30" max="70" value="${G.minTemp}"></div>
+    <div><label>Hiszterézis (°C)</label><input type="number" id="g_hyst" min="1" max="10" value="${G.hyst}"></div>
+    <div><label>Hőfokhatár hiszterézis (°C)</label><input type="number" id="cap_hyst" min="1" max="15" value="${cfg.capHystC}"></div></div>
+    <p style="color:var(--mute);font-size:.82rem;margin:6px 0 0">Napközben a hidegebb víz is megfelel. Az ablakban, ha a víz a minimum alatt van, a „garanciánál használható” hálózatok beosztás nélkül is fűthetnek. Hőmérő nélkül vagy érvénytelen időnél a garancia nem kapcsol be.</p></div>
+    <div class="panel"><h2>Védelmek</h2><div class="row">
+    <div><label>Max. vízhőmérséklet (°C)</label><input type="number" id="s_tmax" min="40" max="95" value="${S.tMaxC}"></div>
+    <div><label>Max. váltás óránként</label><input type="number" id="s_sw" min="1" max="30" value="${S.maxSwitchesPerHour}"></div>
+    <div><label>Min. feszültség (V)</label><input type="number" id="s_vmin" value="${S.vMin}"></div>
+    <div><label>Max. feszültség (V)</label><input type="number" id="s_vmax" value="${S.vMax}"></div></div>
+    <p style="color:var(--mute);font-size:.82rem">A bojler saját termosztátja és hőkioldója ettől függetlenül védi a tartályt.</p></div>
+    <div class="panel"><h2>Hálózat és MQTT</h2>
+    <label>WiFi neve</label><input type="text" id="w_ssid" value="${esc(cfg.wifi.ssid)}">
+    <label>WiFi jelszó (üresen hagyva nem változik)</label><input type="password" id="w_pass" autocomplete="new-password">
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="m_en" ${cfg.mqtt.enabled ? 'checked' : ''}> MQTT használata (Home Assistant)</label>
+    <div class="row"><div><label>Szerver</label><input type="text" id="m_host" value="${esc(cfg.mqtt.host)}"></div>
+    <div><label>Port</label><input type="number" id="m_port" value="${cfg.mqtt.port}"></div>
+    <div><label>Felhasználó</label><input type="text" id="m_user" value="${esc(cfg.mqtt.user)}"></div>
+    <div><label>Jelszó (üresen hagyva nem változik)</label><input type="password" id="m_pass" autocomplete="new-password"></div></div>
+    <label>Eszközazonosító (a-z, 0-9, -, _)</label><input type="text" id="dev" value="${esc(cfg.deviceId)}"></div>
+    <div class="panel"><h2>Értesítések</h2>
+    <label>Csatorna</label><select id="n_kind">
+      ${['Ki', 'Telegram', 'Webhook (JSON)', 'ntfy'].map((n, i) => `<option value="${i}" ${i === NT.kind ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    <label>Mikortól küld</label><select id="n_sev">
+      ${['Minden (info)', 'Figyelmeztetés', 'Hiba', 'Csak kritikus'].map((n, i) => `<option value="${i}" ${i === NT.minSev ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    <label>Webhook / ntfy cím (üresen hagyva nem változik)</label><input type="text" id="n_url" placeholder="${NT.configured ? 'be van állítva' : 'https://…'}" autocomplete="off">
+    <label>Token (Telegram bot vagy ntfy, üresen hagyva nem változik)</label><input type="password" id="n_token" autocomplete="new-password">
+    <label>Telegram chat azonosító</label><input type="text" id="n_chat" value="${esc(NT.chat)}">
+    <div class="actions"><button class="btn alt" id="n_test" type="button">Teszt üzenet</button></div>
+    <p style="color:var(--mute);font-size:.82rem;margin:6px 0 0">Az eszköz csak kifelé küld, az internetről nem fogad. Ne nyiss rá portot a routeren, távoli eléréshez VPN-t használj. A helyi jelzések (kijelző, LED, MQTT, Home Assistant) ettől függetlenül működnek.</p></div>
+    <div class="panel"><h2>Vízkő-figyelés</h2>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="tr_en" ${TR.enabled ? 'checked' : ''}> Bekapcsolva</label>
+    <label>Figyelmeztetés küszöbe (%)</label><input type="number" id="tr_thr" min="3" max="40" value="${TR.thresholdPct}"></div>
+    <div class="panel"><h2>Hozzáférés</h2>
+    <label>Felhasználónév</label><input type="text" id="u_name" value="${esc(cfg.web.user)}">
+    <label>Új jelszó (üresen hagyva nem változik)</label><input type="password" id="u_pass" autocomplete="new-password"></div>`;
+  $('#cfgForm').innerHTML = h;
+  $('#n_test').onclick = async () => {
+    try { await post('/api/notify/test'); toast('Teszt üzenet sorba állítva, az eredmény a Rendszer fülön látszik'); }
+    catch (x) { toast(x.message); }
+  };
+}
+$('#reloadCfg').onclick = loadCfg;
+$('#saveCfg').onclick = async () => {
+  const n = id => $('#' + id);
+  const src = [...document.querySelectorAll('#cfgForm .panel[data-i]')].map(p => {
+    const g = k => p.querySelector(`[data-k=${k}]`);
+    let days = 0; p.querySelectorAll('[data-d]').forEach(c => { if (c.checked) days |= 1 << +c.dataset.d; });
+    return { name:g('name').value, priority:+g('priority').value, enabled:g('enabled').value === '1',
+             from:t2m(g('from').value), to:t2m(g('to').value), days, needExt:g('needExt').checked,
+             maxTemp:+g('maxTemp').value, guarantee:g('guarantee').checked };
+  });
+  const body = {
+    src, preempt:n('preempt').checked, deviceId:n('dev').value.trim(),
+    timing:{ deadMs:Math.round(n('t_dead').value * 1000), minDwellMs:Math.round(n('t_dwell').value * 1000),
+             availOnMs:Math.round(n('t_on').value * 1000), availOffMs:Math.round(n('t_off').value * 1000) },
+    safety:{ tMaxC:+n('s_tmax').value, maxSwitchesPerHour:+n('s_sw').value, vMin:+n('s_vmin').value, vMax:+n('s_vmax').value },
+    wifi:{ ssid:n('w_ssid').value }, mqtt:{ enabled:n('m_en').checked, host:n('m_host').value, port:+n('m_port').value, user:n('m_user').value },
+    web:{ user:n('u_name').value },
+    target:+n('t_target').value, hyst:+n('t_hyst').value,
+    capHystC:+n('cap_hyst').value,
+    guarantee:{ enabled:n('g_en').checked, readyAt:t2m(n('g_ready').value), lead:+n('g_lead').value,
+                until:t2m(n('g_until').value), minTemp:+n('g_min').value, hyst:+n('g_hyst').value },
+    notify:{ kind:+n('n_kind').value, minSev:+n('n_sev').value, chat:n('n_chat').value },
+    trend:{ enabled:n('tr_en').checked, thresholdPct:+n('tr_thr').value }
+  };
+  if (n('n_url').value) body.notify.url = n('n_url').value;
+  if (n('n_token').value) body.notify.token = n('n_token').value;
+  if (n('w_pass').value) body.wifi.pass = n('w_pass').value;
+  if (n('m_pass').value) body.mqtt.pass = n('m_pass').value;
+  if (n('u_pass').value) body.web.pass = n('u_pass').value;
+  try { await post('/api/config', body); toast('Mentve'); loadCfg(); }
+  catch (x) { toast('Nem mentettem: ' + x.message); }
+};
+
+/* ---------- napló ---------- */
+async function loadLogs() {
+  try {
+    const files = await j('/api/log/files');
+    files.sort((a, b) => b.name.localeCompare(a.name));
+    $('#logFiles').innerHTML = files.length ? files.map(f =>
+      `<div><a href="/api/log/download?f=${encodeURIComponent(f.name)}" download>${esc(f.name)}</a> <span style="color:var(--mute)">${Math.round(f.size / 1024)} kB</span></div>`).join('') : 'Még nincs napló.';
+    const r = await fetch('/api/events'); $('#events').textContent = (await r.text()).trim().split('\n').slice(-60).reverse().join('\n');
+  } catch (e) { toast(e.message); }
+}
+
+/* ---------- OTA ---------- */
+$('#upBtn').onclick = () => {
+  const fw = $('#fw').files[0], fs = $('#fsimg').files[0];
+  const file = fw || fs; if (!file) { toast('Válassz fájlt'); return; }
+  if (!confirm('Feltöltöd a fájlt? Közben a váltás le van tiltva, utána az eszköz újraindul.')) return;
+  const x = new XMLHttpRequest(), f = new FormData();
+  f.append('update', file, file.name);
+  x.open('POST', '/update' + (fw ? '' : '?type=fs'));
+  x.upload.onprogress = e => { $('#upMsg').textContent = e.lengthComputable ? `Feltöltés: ${Math.round(100 * e.loaded / e.total)}%` : ''; };
+  x.onload = () => { $('#upMsg').textContent = x.status === 200 ? 'Kész, az eszköz újraindul.' : 'Sikertelen: ' + x.responseText; };
+  x.onerror = () => { $('#upMsg').textContent = 'Hálózati hiba'; };
+  x.send(f);
+};
+</script>
+</body>
+</html>

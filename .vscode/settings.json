@@ -1,0 +1,29 @@
+{
+  // Kodolas: mindig UTF-8, LF sorvegzodes (Windowson is). A PlatformIO scriptek es a generalt fejlec ezt varjak.
+  "files.encoding": "utf8",
+  "files.autoGuessEncoding": false,
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": false,
+
+  // Ne formazza at mentéskor (a generalt include/ui_html.gz.h-t sem)
+  "editor.formatOnSave": false,
+
+  "files.associations": {
+    "*.h": "cpp",
+    "platformio.ini": "ini"
+  },
+
+  // A build kimenete es a generalt fajl ne szurja meg a keresest, a figyelest
+  "search.exclude": {
+    "**/.pio": true,
+    "include/ui_html.gz.h": true
+  },
+  "files.watcherExclude": {
+    "**/.pio/**": true
+  },
+
+  // PlatformIO: a fordito utvonalait (c_cpp_properties.json) o generalja, ezt ne irjuk felul kezzel
+  "platformio-ide.autoRebuildAutocompleteIndex": true,
+  "C_Cpp.errorSquiggles": "enabled"
+}

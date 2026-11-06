@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Boiler Dashboard (v2)</title>
+
+<!--
+  v2: az eredeti dashboard (dashboard.html) kinézete és szerkezete, valódi adatokkal.
+  Ami VÁLTOZOTT az eredetihez képest, "ÚJ" jelzéssel van megjelölve (CSS, HTML és JS):
+    1. A nagy szám a MÉRT hőmérséklet, a gyűrű is ezt mutatja; a csúszka a CÉLHŐMÉRSÉKLET (jelölő a gyűrűn).
+    2. Az állapot (felfűtés / várakozás / rendben / kikapcsolva / hiba) az eszköz termosztátjából jön.
+    3. Három hálózat jelzője, teljesítmény / feszültség / áram sor, garancia jelzés.
+    4. A napló és a hibák oldal valós adatot mutat, a beállítások az eszközre mentenek (nem a böngészőbe).
+    5. Ha az eszköz nem érhető el (pl. a fájlt közvetlenül nyitod meg), bemutató módban fut mintaadattal.
+  A lábléc ikonmenüje, a színek és a csúszkák az eredetiek.
+-->
+
+<style>
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
+
+body{
+    background:#0f172a;
+    font-family:Segoe UI,sans-serif;
+    color:white;
+    display:flex;
+    justify-content:center;
+    padding:20px;
+}
+
+.app{
+    width:100%;
+    max-width:430px;
+}
+
+.page{
+    display:none;
+}
+
+.page.active{
+    display:block;
+}
+
+.card{
+    background:#1e293b;
+    padding:20px;
+    border-radius:30px;
+    box-shadow:0 10px 30px rgba(0,0,0,.4);
+}
+
+.thermostat{
+    width:300px;
+    height:300px;
+    margin:auto;
+    border-radius:50%;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    padding:12px;
+    transition:.4s;
+    position:relative; /* ÚJ: a célhőmérséklet-jelölőhöz */
+    box-shadow:
+    0 0 20px rgba(255,255,255,.05),
+    inset 0 0 10px rgba(255,255,255,.08);
+}
+
+.inner{
+    width:246px;
+    height:246px;
+    border-radius:50%;
+    background:linear-gradient(
+    180deg,
+    #1b2434,
+    #111827
+    );
+
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    align-items:center;
+
+    box-shadow:
+    inset 0 2px 10px rgba(255,255,255,.05),
+    0 2px 20px rgba(0,0,0,.4);
+}
+
+.tempRow{
+    display:flex;
+    align-items:center;
+    gap:10px;
+}
+
+.temp{
+    font-size:65px;
+    font-weight:700;
+}
+
+.state{
+    min-width:50px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:42px;
+}
+
+.status{
+    margin-top:10px;
+    color:#cbd5e1;
+    text-align:center;
+}
+
+.slider{
+    width:100%;
+    margin-top:20px;
+    appearance:none;
+    height:8px;
+    border-radius:10px;
+    background:linear-gradient(
+        90deg,
+        #2563eb,
+        #22c55e,
+        #facc15,
+        #f97316,
+        #ef4444
+    );
+}
+
+.slider::-webkit-slider-thumb{
+    appearance:none;
+    width:22px;
+    height:22px;
+    border-radius:50%;
+    background:white;
+    cursor:pointer;
+    box-shadow:0 0 10px rgba(255,255,255,.5);
+}
+
+.menu{
+    margin-top:16px;
+    display:flex;
+    justify-content:space-around;
+    background:#111827;
+    border-radius:18px;
+    padding:15px;
+}
+
+.menu div{
+    cursor:pointer;
+    font-size:26px;
+}
+
+.led{
+    width:28px;
+    height:28px;
+    border-radius:50%;
+    background:
+    radial-gradient(circle at 35% 35%,#d8ffd8,#00ff66);
+
+    box-shadow:
+    0 0 10px #00ff66,
+    0 0 20px #00ff66,
+    0 0 35px #00ff66;
+
+    animation:pulse 2s infinite;
+}
+
+@keyframes pulse{
+    50%{
+        transform:scale(1.15);
+    }
+}
+
+.setting{
+    margin-bottom:20px;
+}
+
+button{
+    border:none;
+    padding:12px 20px;
+    border-radius:12px;
+    font-size:16px;
+    color:white;
+    cursor:pointer;
+}
+
+#saveBtn{
+    background:#3b82f6;
+}
+
+.logItem,
+.errorItem{
+    background:#0f172a;
+    padding:12px;
+    border-radius:12px;
+    margin-top:10px;
+}
+
+/* ===== ÚJ ===== */
+
+/* a célhőmérséklet jelölője a gyűrűn (a gyűrű közepe körül forog) */
+.marker{
+    position:absolute;
+    top:0;
+    left:calc(50% - 2px);
+    width:4px;
+    height:16px;
+    border-radius:2px;
+    background:#fff;
+    box-shadow:0 0 8px rgba(255,255,255,.7);
+    transform-origin:50% 150px;
+    transition:transform .4s;
+}
+
+.chips{
+    display:flex;
+    gap:8px;
+    margin-top:18px;
+}
+
+.chip{
+    flex:1;
+    background:#0f172a;
+    border-radius:14px;
+    padding:8px 4px;
+    text-align:center;
+    font-size:13px;
+    color:#94a3b8;
+    border:2px solid transparent;
+}
+
+.chip b{
+    display:block;
+    color:#e2e8f0;
+    font-size:14px;
+}
+
+.chip.on{
+    color:#fff;
+}
+
+.dot{
+    display:inline-block;
+    width:9px;
+    height:9px;
+    border-radius:50%;
+    background:#475569;
+    margin-right:4px;
+}
+
+.dot.up{
+    background:#22c55e;
+}
+
+.readings{
+    display:flex;
+    justify-content:space-between;
+    margin-top:14px;
+    color:#cbd5e1;
+    font-size:14px;
+}
+
+.note{
+    display:none;
+    margin-top:12px;
+    background:#0f172a;
+    border-radius:12px;
+    padding:10px;
+    font-size:14px;
+    color:#cbd5e1;
+}
+
+.note.show{
+    display:block;
+}
+
+#demoBanner{
+    display:none;
+    margin-bottom:12px;
+    background:#78350f;
+    color:#fde68a;
+    border-radius:12px;
+    padding:10px;
+    font-size:14px;
+    text-align:center;
+}
+
+@media (prefers-reduced-motion: reduce){
+    .led{animation:none;}
+    .thermostat,.marker{transition:none;}
+}
+</style>
+</head>
+
+<body>
+
+<div class="app">
+
+<div id="demoBanner">Bemutató mód: az eszköz nem érhető el, mintaadatot látsz.</div>
+
+<div id="home" class="page active">
+
+<div class="card">
+
+<div id="ring" class="thermostat">
+
+<div id="marker" class="marker"></div>
+
+<div class="inner">
+
+<div class="tempRow">
+
+<div id="tempText" class="temp">--</div>
+
+<div>°C</div>
+
+<div id="state" class="state">❔</div>
+
+</div>
+
+<div id="status" class="status">
+Kapcsolódás…
+</div>
+
+</div>
+
+</div>
+
+<input
+id="tempSlider"
+class="slider"
+type="range"
+min="0"
+max="60"
+value="55">
+
+<!-- ÚJ: hálózatok, mérések, garancia -->
+<div id="chips" class="chips"></div>
+
+<div id="readings" class="readings"></div>
+
+<div id="guarNote" class="note">🛁 Garantált minimum aktív: a víz fürdéshez alkalmas hőmérsékletre melegszik estére.</div>
+
+</div>
+
+</div>
+
+<div id="log" class="page">
+
+<div class="card">
+<h2>📜 Napló</h2>
+
+<div id="logList">
+<div class="logItem">Betöltés…</div>
+</div>
+
+</div>
+
+</div>
+
+<div id="errors" class="page">
+
+<div class="card">
+<h2>⚠️ Hibák</h2>
+
+<div id="errList">
+<div class="errorItem">
+✅ Nincs aktív hiba
+</div>
+</div>
+
+</div>
+
+</div>
+
+<div id="settings" class="page">
+
+<div class="card">
+
+<h2>⚙️ Beállítások</h2>
+
+<div class="setting">
+
+<label>
+Hiszterézis:
+<span id="hystValue">2</span> °C
+</label>
+
+<input
+id="hystSlider"
+class="slider"
+type="range"
+min="0.5"
+max="10"
+step="0.5"
+value="2">
+
+</div>
+
+<button id="saveBtn"
+onclick="saveSettings()">
+✅ Mentve
+</button>
+
+</div>
+
+</div>
+
+<div class="menu">
+<div onclick="showPage('home')">🏠</div>
+<div onclick="showPage('log')">📜</div>
+<div onclick="showPage('errors')">⚠️</div>
+<div onclick="showPage('settings')">⚙️</div>
+</div>
+
+</div>
+
+<script>
+
+/* ---------- eredeti: oldalváltás (kiegészítve az adatbetöltéssel) ---------- */
+function showPage(page){
+    document.querySelectorAll(".page")
+    .forEach(p=>p.classList.remove("active"));
+
+    document.getElementById(page)
+    .classList.add("active");
+
+    if(page==="log") loadLog();          // ÚJ
+    if(page==="errors") renderErrors();  // ÚJ
+}
+
+const slider=document.getElementById("tempSlider");
+const hystSlider=document.getElementById("hystSlider");
+
+const tempText=document.getElementById("tempText");
+const state=document.getElementById("state");
+const status=document.getElementById("status");
+const ring=document.getElementById("ring");
+
+const saveBtn=document.getElementById("saveBtn");
+
+/* ---------- ÚJ: adatforrás ---------- */
+const SRC_COL=["#facc15","#60a5fa","#d946ef"];
+const ERR={
+    E01:"DS18B20 hőmérő hiba", E02:"PZEM mérő nem válaszol", E03:"Reteszelési sértés (kritikus)",
+    E04:"Kontaktor nem húz be", E05:"Kontaktor nem enged el (kritikus)", E06:"Feszültség a tartományon kívül",
+    E07:"Túlhőmérséklet", E08:"WiFi/MQTT kiesés", E09:"Nincs érvényes idő (NTP)", E10:"Gyakori újraindulás",
+    E11:"Kevés a tárhely", E12:"Hibás konfiguráció", E13:"Túl gyakori kapcsolgatás", E14:"Nincs használható hálózat",
+    E15:"Vízkő/üledék gyanú", E16:"Fűtőelem teljesítménye csökken"
+};
+const CRIT=["E03","E05","E07"];
+
+let last=null;          // az eszköz utolsó állapota
+let demo=false;         // bemutató mód
+let dirtyTarget=false;  // a csúszkát a felhasználó állította, még nincs elmentve
+let dirtyHyst=false;
+let firstLoad=true;
+
+const mock={t:46, n:0};
+
+function mockData(){
+    mock.n++;
+    mock.t+=0.04; if(mock.t>55.2) mock.t=47;
+    const heating=mock.t<53;
+    return {
+        state:{fsm:"ACTIVE",active:2,mode:"auto",manual_bypass:false,fault:null,errors:[],guarantee:false,
+               heat:heating?"heating":"waiting",target:55,hyst:2,pres:[true,true,false],
+               src:[{capped:false,blocked:false},{capped:false,blocked:false},{capped:false,blocked:false}]},
+        tele:{temp:mock.t,p:heating?2980:0,v:231.2,i:heating?12.9:0},
+        names:["Solar","Hálózat","H tarifa"]
+    };
+}
+
+async function getStatus(){
+    try{
+        const r=await fetch("/api/status",{cache:"no-store"});
+        if(!r.ok) throw new Error(r.status);
+        demo=false;
+        return await r.json();
+    }catch(e){
+        demo=true;
+        return mockData();
+    }
+}
+
+async function sendConfig(body){
+    if(demo) return true;
+    const r=await fetch("/api/config",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(body)
+    });
+    return r.ok;
+}
+
+function colorFromTemp(temp){
+
+    let hue=220-(temp/60)*220;
+
+    return `hsl(${hue},90%,55%)`;
+}
+
+/* ÚJ: az állapot kiolvasása az eszköz adataiból */
+function phaseView(d){
+    if(!d) return {icon:"❔",text:"Nincs kapcsolat"};
+    const s=d.state;
+    const crit=(s.errors||[]).find(c=>CRIT.includes(c));
+    if(s.fsm==="FAULT"||crit) return {icon:"⚠️",text:"Hiba: "+(s.fault||crit)};
+    if(s.manual_bypass) return {icon:"🖐️",text:"Kézi üzem"};
+    if(s.mode==="off"||s.target===0) return {icon:"",text:"Kikapcsolva"};
+    if(s.heat==="heating" && s.active===0) return {icon:"⏳",text:"Fűtene, de nincs használható hálózat"};
+    if(s.heat==="heating") return {icon:"♨️",text:"Felfűtés folyamatban"};
+    if(s.heat==="waiting") return {icon:'<div class="led"></div>',text:"Várakozás"};
+    if(s.heat==="reached") return {icon:"😊",text:"Hőfok rendben"};
+    return {icon:"❔",text:"Nincs hőmérő adat"};
+}
+
+function updateDisplay(){
+
+    let target=parseFloat(slider.value);
+    let hyst=parseFloat(hystSlider.value);
+
+    const d=last;
+    const temp=(d && d.tele.temp!==null && d.tele.temp!==undefined)?d.tele.temp:null;
+    const view=phaseView(d);
+
+    /* a csúszka a célhőmérséklet: a jelölő a gyűrűn mutatja */
+    const marker=document.getElementById("marker");
+    marker.style.display=target===0?"none":"block";
+    marker.style.transform=`rotate(${Math.min(360,(target/60)*360)}deg)`;
+
+    if(view.text==="Kikapcsolva" || target===0){
+
+        tempText.innerHTML="⏻";
+        state.innerHTML="";
+        status.innerHTML="Kikapcsolva";
+
+        ring.style.background=
+        "conic-gradient(#4b5563 0deg,#4b5563 360deg)";
+
+    }
+    else{
+
+        tempText.innerHTML=temp===null?"--":Math.round(temp);
+        state.innerHTML=view.icon;
+        status.innerHTML=view.text;
+
+        const shown=temp===null?0:temp;
+        const color=colorFromTemp(shown);
+        const angle=Math.max(0,Math.min(360,(shown/60)*360));
+
+        ring.style.background=
+        `conic-gradient(
+          ${color} 0deg,
+          ${color} ${angle}deg,
+          #253142 ${angle}deg,
+          #253142 360deg
+        )`;
+    }
+
+    /* ÚJ: hálózatok és mérések */
+    if(d){
+        const names=d.names||["1","2","3"];
+        document.getElementById("chips").innerHTML=[0,1,2].map(i=>{
+            const on=d.state.active===i+1;
+            const up=d.state.pres[i];
+            const s=d.state.src[i]||{};
+            const note=on?"bojleren":(!up?"nincs fesz.":(s.capped?"hőfokhatár":(s.blocked?"blokkolva":"jelen van")));
+            return `<div class="chip${on?" on":""}" style="${on?"border-color:"+SRC_COL[i]:""}">
+                <b><span class="dot${up?" up":""}"></span>${names[i]}</b>${note}</div>`;
+        }).join("");
+
+        const t=d.tele;
+        document.getElementById("readings").innerHTML=
+            `<span>${temp===null?"--":temp.toFixed(1)} °C</span><span>${Math.round(t.p||0)} W</span>`+
+            `<span>${Math.round(t.v||0)} V</span><span>${(t.i||0).toFixed(1)} A</span>`;
+
+        document.getElementById("guarNote").classList.toggle("show",!!d.state.guarantee);
+    }
+}
+
+function markDirty(){
+    saveBtn.style.background="#22c55e";
+    saveBtn.innerHTML="💾 Mentés";
+}
+
+slider.addEventListener("input",()=>{
+
+    dirtyTarget=true;
+    markDirty();
+
+    updateDisplay();
+});
+
+hystSlider.addEventListener("input",()=>{
+
+    dirtyHyst=true;
+
+    document.getElementById("hystValue").innerHTML=
+    hystSlider.value;
+
+    markDirty();
+
+    updateDisplay();
+});
+
+/* ÚJ: mentés az eszközre (csak azt küldi, amihez hozzányúltál) */
+async function saveSettings(){
+
+    const body={};
+    if(dirtyTarget) body.target=parseFloat(slider.value);
+    if(dirtyHyst) body.hyst=parseFloat(hystSlider.value);
+
+    if(Object.keys(body).length===0){
+        saveBtn.style.background="#3b82f6";
+        saveBtn.innerHTML="✅ Mentve";
+        return;
+    }
+
+    try{
+        const ok=await sendConfig(body);
+        if(!ok) throw new Error("elutasítva");
+        dirtyTarget=false;
+        dirtyHyst=false;
+        saveBtn.style.background="#3b82f6";
+        saveBtn.innerHTML="✅ Mentve";
+    }catch(e){
+        saveBtn.style.background="#ef4444";
+        saveBtn.innerHTML="⚠️ Nem sikerült";
+    }
+}
+
+/* ÚJ: hibák és napló */
+function renderErrors(){
+    const errs=(last && last.state.errors)||[];
+    const list=document.getElementById("errList");
+    list.innerHTML=errs.length
+        ? errs.map(c=>`<div class="errorItem">⚠️ ${c}: ${ERR[c]||""}</div>`).join("")
+        : `<div class="errorItem">✅ Nincs aktív hiba</div>`;
+}
+
+async function loadLog(){
+    const list=document.getElementById("logList");
+    if(demo){
+        list.innerHTML=`<div class="logItem">♨️ Fűtés elindult</div><div class="logItem">😊 Célhőmérséklet elérve</div>`;
+        return;
+    }
+    try{
+        const r=await fetch("/api/events",{cache:"no-store"});
+        const lines=(await r.text()).trim().split("\n").slice(1).reverse()
+            .filter(l=>!l.includes(",STATE,")).slice(0,20);
+        list.innerHTML=lines.length?lines.map(l=>{
+            const c=l.split(",");           // ts,uptime,típus,kód,from,to,üzenet
+            const when=(c[0]||"").replace("T"," ").slice(5,16);
+            let icon="•",text=c.slice(6).join(",");
+            if(c[2]==="SWITCH"){icon="🔀";text=`Váltás: ${c[4]} → ${c[5]} (${c[6]||""})`;}
+            else if(c[2]==="ERROR"){icon="⚠️";text=`${c[3]} ${c.slice(6).join(",")}`;}
+            else if(c[2]==="CMD"){icon="⌨️";}
+            return `<div class="logItem">${icon} ${text}<br><small style="color:#94a3b8">${when}</small></div>`;
+        }).join(""):`<div class="logItem">Még nincs esemény</div>`;
+    }catch(e){
+        list.innerHTML=`<div class="logItem">A napló nem érhető el</div>`;
+    }
+}
+
+/* ÚJ: frissítés */
+async function poll(){
+    last=await getStatus();
+    document.getElementById("demoBanner").style.display=demo?"block":"none";
+
+    if(firstLoad || !dirtyTarget) slider.value=last.state.target;
+    if(firstLoad || !dirtyHyst){
+        hystSlider.value=last.state.hyst;
+        document.getElementById("hystValue").innerHTML=last.state.hyst;
+    }
+    firstLoad=false;
+
+    updateDisplay();
+    if(document.getElementById("errors").classList.contains("active")) renderErrors();
+}
+
+poll();
+setInterval(poll,2000);
+
+</script>
+
+</body>
+</html>
