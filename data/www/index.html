@@ -384,7 +384,7 @@ const m2t = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 
 const t2m = t => { const [h, m] = (t || '00:00').split(':'); return (+h) * 60 + (+m); };
 
 async function loadCfg() {
-  try { cfg = await j('/api/config'); } catch (e) { toast(e.message); return; }
+  try { cfg = await j('/api/config'); } catch (e) { toast(e.message); $('#cfgForm').innerHTML = '<div class="panel"><h2>A beállítások nem töltődtek be</h2><p>' + esc(e.message) + '</p></div>'; return; }
   let h = '';
   cfg.src.forEach((s, i) => {
     h += `<div class="panel" data-i="${i}"><h2 style="color:${COL[i]}">Hálózat ${i + 1}</h2>
@@ -403,7 +403,7 @@ async function loadCfg() {
   const T = cfg.timing, S = cfg.safety, G = cfg.guarantee, NT = cfg.notify, TR = cfg.trend;
   h += `<div class="panel"><h2>Időzítések</h2><div class="row">
     <div><label>Biztonsági várakozás váltáskor (s, min. 2)</label><input type="number" id="t_dead" min="2" step="0.5" value="${T.deadMs / 1000}"></div>
-    <div><label>Min. tartózkodás egy forráson (s)</label><input type="number" id="t_dwell" min="0" value="${T.minDwellMs / 1000}"></div>
+    <div><label>Min. tartózkodás egy forráson (s)</label><input type="number" id="t_dwell" min="0" value="${T.dwellMs / 1000}"></div>
     <div><label>Új hálózat stabilitási ideje (s)</label><input type="number" id="t_on" min="0" value="${T.availOnMs / 1000}"></div>
     <div><label>Kiesés-szűrés (s)</label><input type="number" id="t_off" min="0.2" step="0.1" value="${T.availOffMs / 1000}"></div></div>
     <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="preempt" ${cfg.preempt ? 'checked' : ''}> Magasabb prioritású hálózat átveheti a bojlert</label></div>
@@ -469,7 +469,7 @@ $('#saveCfg').onclick = async () => {
   });
   const body = {
     src, preempt:n('preempt').checked, deviceId:n('dev').value.trim(),
-    timing:{ deadMs:Math.round(n('t_dead').value * 1000), minDwellMs:Math.round(n('t_dwell').value * 1000),
+    timing:{ deadMs:Math.round(n('t_dead').value * 1000), dwellMs:Math.round(n('t_dwell').value * 1000),
              availOnMs:Math.round(n('t_on').value * 1000), availOffMs:Math.round(n('t_off').value * 1000) },
     safety:{ tMaxC:+n('s_tmax').value, maxSwitchesPerHour:+n('s_sw').value, vMin:+n('s_vmin').value, vMax:+n('s_vmax').value },
     wifi:{ ssid:n('w_ssid').value }, mqtt:{ enabled:n('m_en').checked, host:n('m_host').value, port:+n('m_port').value, user:n('m_user').value },
