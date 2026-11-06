@@ -88,8 +88,11 @@ bool ConfigStore::begin() {
 Config ConfigStore::get() const { Lock l(mtx_); return cfg_; }
 
 void ConfigStore::toJson(JsonDocument& d, bool secrets) const {
+  // FONTOS: a `c` helyi másolat a függvény végén megszűnik, a JSON-t viszont a hívó csak utána írja ki.
+  // Az ArduinoJson a `const char[]` szövegeket mutatóként tárolná (nem másolja), ezért minden szöveget
+  // String-gé alakítunk, ami másolódik. Enélkül a /api/config és a mentett konfiguráció szemetet tartalmaz.
   const Config c = get();
-  d["deviceId"] = c.deviceId;  d["preempt"] = c.preempt;
+  d["deviceId"] = String(c.deviceId);  d["preempt"] = c.preempt;
   d["logIntervalS"] = c.logIntervalS;  d["logRetentionDays"] = c.logRetentionDays;
   JsonObject t = d["timing"].to<JsonObject>();
   t["deadMs"] = c.timing.deadMs;  t["closeMs"] = c.timing.closeTimeoutMs;  t["openMs"] = c.timing.openTimeoutMs;
@@ -102,7 +105,7 @@ void ConfigStore::toJson(JsonDocument& d, bool secrets) const {
   JsonArray a = d["src"].to<JsonArray>();
   for (uint8_t i = 0; i < kSources; ++i) {
     JsonObject o = a.add<JsonObject>();
-    o["name"] = c.srcName[i];  o["enabled"] = c.src[i].enabled;  o["priority"] = c.src[i].priority;
+    o["name"] = String(c.srcName[i]);  o["enabled"] = c.src[i].enabled;  o["priority"] = c.src[i].priority;
     o["from"] = c.src[i].schedFrom;  o["to"] = c.src[i].schedTo;  o["days"] = c.src[i].dayMask;
     o["needExt"] = c.src[i].needExtOk;
     o["maxTemp"] = c.src[i].maxTempC;  o["guarantee"] = c.src[i].guarantee;
@@ -113,19 +116,19 @@ void ConfigStore::toJson(JsonDocument& d, bool secrets) const {
   g["enabled"] = c.guar.enabled;  g["readyAt"] = c.guar.readyAtMin;  g["lead"] = c.guar.leadMin;
   g["until"] = c.guar.untilMin;   g["minTemp"] = c.guar.minTempC;    g["hyst"] = c.guar.hystC;
   JsonObject nt = d["notify"].to<JsonObject>();
-  nt["kind"] = c.notifyKind;  nt["minSev"] = c.notifyMinSev;  nt["chat"] = c.notifyChat;
+  nt["kind"] = c.notifyKind;  nt["minSev"] = c.notifyMinSev;  nt["chat"] = String(c.notifyChat);
   nt["configured"] = c.notifyKind == 1 ? (c.notifyToken[0] && c.notifyChat[0]) : (c.notifyUrl[0] != 0);
   JsonObject tr = d["trend"].to<JsonObject>();
   tr["enabled"] = c.trendEnabled;  tr["thresholdPct"] = c.trendThresholdPct;
-  JsonObject w = d["wifi"].to<JsonObject>();  w["ssid"] = c.wifiSsid;
+  JsonObject w = d["wifi"].to<JsonObject>();  w["ssid"] = String(c.wifiSsid);
   JsonObject m = d["mqtt"].to<JsonObject>();
-  m["enabled"] = c.mqttEnabled;  m["host"] = c.mqttHost;  m["port"] = c.mqttPort;
-  m["user"] = c.mqttUser;  m["base"] = c.mqttBase;
-  d["web"]["user"] = c.webUser;
+  m["enabled"] = c.mqttEnabled;  m["host"] = String(c.mqttHost);  m["port"] = c.mqttPort;
+  m["user"] = String(c.mqttUser);  m["base"] = String(c.mqttBase);
+  d["web"]["user"] = String(c.webUser);
   if (secrets) {                                   // csak belső mentéshez
-    w["pass"] = c.wifiPass;  m["pass"] = c.mqttPass;
-    d["web"]["passHash"] = c.webPassHash;  d["ota"]["pass"] = c.otaPass;
-    nt["url"] = c.notifyUrl;  nt["token"] = c.notifyToken;
+    w["pass"] = String(c.wifiPass);  m["pass"] = String(c.mqttPass);
+    d["web"]["passHash"] = String(c.webPassHash);  d["ota"]["pass"] = String(c.otaPass);
+    nt["url"] = String(c.notifyUrl);  nt["token"] = String(c.notifyToken);
   }
 }
 
