@@ -157,3 +157,18 @@ Gombok (mind GND-re kötve, belső felhúzással; az UP/DOWN nélkül is működ
 A módosítás 2,5 másodperc után mentődik (a "MENTVE" jelzés megjelenik), így kevés az NVS-írás. 30 másodperc után a kijelző visszatér a főoldalra.
 A kijelző alapfontja nem tud ékezetet és emojit: a szövegek ASCII-ben vannak, az ikonokat a kód rajzolja. Ha a kép 2-3 px-et elcsúszik,
 az `initR` paramétere `INITR_BLACKTAB` legyen.
+2026.11.09
+működik- 2026-11-09
+
+### Módosítva
+- Kijelző: a kis szövegek már nem a 2x-es (élsimított) vászonra kerülnek, hanem a `resolve()` után a kész 128x128-as képre rajzolódnak, így élesek, nem mosódnak el.
+- Kijelző: a kis szövegek új betűtípusa `u8g2_font_helvR08_te` (arányos, 8 px), amely a Latin Extended-A tartományt is tartalmazza. A betűtípus a `SMALL_FONT` makróval egy helyen cserélhető.
+- Kijelző: minden felirat ékezetes magyar szöveg lett (pl. `Hőmérő hiba`, `Nincs hálózat`, `BEÁLLÍTÁSOK`, `VIGYÁZAT! FORRÓ VÍZ!`), a hőfokok mellett `°C` jelenik meg.
+- Kijelző: a naplósorok és a feliratok vágása UTF-8-biztos (`utf8Trim`), nem marad félbevágott ékezetes karakter.
+- Kijelző: a mentési hiba toast szövege `NEM MENTHETO` helyett `MENTÉS HIBA`.
+
+### Hozzáadva
+- Függőség: `olikraus/U8g2_for_Adafruit_GFX` (`platformio.ini` → `lib_deps`).
+
+### Változatlan
+- A nagy piros kérdőjel (E01 hőmérőhiba), a nagy hőmérsékletszám, az ikonok és a gyűrű továbbra is a 2x-es vásznon készülnek (élsimítva).
