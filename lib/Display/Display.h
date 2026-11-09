@@ -3,6 +3,7 @@
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
+#include "SsCanvas.h"
 #include <EventBus.h>
 #include <Snapshot.h>
 #include <ICommandSink.h>
@@ -57,7 +58,7 @@ class Display {
   ConfigStore& cfg_;
   const TimeService& time_;
   Adafruit_ST7735 tft_;
-  GFXcanvas16* cv_ = nullptr;
+  SsCanvas* cv_ = nullptr;                                         // élsimított (2x felbontású) vászon
 
   Button btnPage_{pins_page()}, btnUp_{pins_up()}, btnDown_{pins_down()};
   static uint8_t pins_page();

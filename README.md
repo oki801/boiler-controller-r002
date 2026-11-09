@@ -133,7 +133,7 @@ A LittleFS a gyakorlatban nyűgös (formázás, partíciócímke, kép/partíci�
 
 A kinézete a webes dashboardot követi: gyűrűs hőmérő (a mért hőmérséklet, fehér jelölő a célhőmérsékletnél), állapotikon
 (felfűtés, várakozás, hőfok rendben, kikapcsolva, hiba, kézi üzem, nincs használható hálózat), három hálózat jelző, és ikonos lábléc
-(főoldal, napló, hibák, beállítások). Előnézeti képek: `docs/kijelzo_elonezet_foldal.png`, `docs/kijelzo_elonezet_oldalak.png`
+(főoldal, napló, hibák, beállítások). Előnézeti képek: `docs/kijelzo_elonezet_foldal.png`, `docs/kijelzo_elonezet_oldalak.png`. A képek a valódi `Display.cpp`-ből készülnek, PC-n: `tools/display_preview/build.sh` (g++, Python+Pillow, az első futáskor internet az Adafruit GFX-hez és az ArduinoJson-hoz).
 (a valódi rajzoló kódból PC-n renderelve).
 
 | Kijelző | ESP32-S3 |

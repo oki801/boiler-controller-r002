@@ -7,7 +7,7 @@ namespace {
 constexpr int W = 128, H = 128;
 constexpr uint16_t c565(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
 constexpr uint16_t kBlack = 0x0000, kWhite = 0xFFFF;
-constexpr uint16_t kGray = c565(110, 124, 134), kDark = c565(37, 49, 66), kPanel = c565(17, 24, 39);
+constexpr uint16_t kGray = c565(138, 150, 160), kDark = c565(37, 49, 66), kPanel = c565(17, 24, 39);
 constexpr uint16_t kOk = c565(34, 197, 94), kBad = c565(239, 68, 68), kWarn = c565(250, 204, 21), kOrange = c565(249, 115, 22);
 const uint16_t kSrc[kSources] = {c565(250, 204, 21), c565(96, 165, 250), c565(217, 70, 239)};    // mint a webes felületen
 constexpr float kScale = 60.0f;            // a dashboard gyűrűje 0-60 °C
@@ -77,8 +77,8 @@ void Display::begin() {
   tft_.initR(INITR_144GREENTAB);              // ha a kép 2-3 px-et elcsúszik: INITR_BLACKTAB
   tft_.setRotation(0);
   tft_.fillScreen(kBlack);
-  cv_ = new GFXcanvas16(W, H);                // 32 kB, villogásmentes rajzoláshoz
-  if (!cv_ || !cv_->getBuffer()) { delete cv_; cv_ = nullptr; return; }
+  cv_ = new SsCanvas(W, H);                   // 2x felbontású vászon (128 kB, PSRAM) + 32 kB kész kép; élsimításhoz
+  if (!cv_ || !cv_->ok()) { Serial.printf("[display] nincs eleg memoria a vaszonhoz\n"); delete cv_; cv_ = nullptr; return; }
   prevBuf_ = static_cast<uint16_t*>(malloc(W * H * 2));              // ha nincs memória: nincs csúsztatás, a többi működik
   const Config c = cfg_.get();
   if (c.targetC > 0) lastOnTarget_ = c.targetC;
@@ -186,7 +186,7 @@ void Display::flushPending(uint32_t now) {
 
 void Display::loop() {
   bool redraw = true;
-  uint32_t lastDrawMs = 0, lastStepMs = millis(), lastStackChkMs = 0;
+  uint32_t lastDrawMs = 0, lastStepMs = millis(), lastStackChkMs = 0, maxDrawMs = 0;
   UBaseType_t minStackFree = (UBaseType_t)-1;
   for (;;) {
     const uint32_t now = millis();
@@ -194,6 +194,8 @@ void Display::loop() {
       lastStackChkMs = now;
       const UBaseType_t fr = uxTaskGetStackHighWaterMark(nullptr);
       if (fr < minStackFree) { minStackFree = fr; Serial.printf("[stack] display szabad min: %u bajt\n", (unsigned)fr); }
+      Serial.printf("[display] rajzolas max %u ms az elmult percben\n", (unsigned)maxDrawMs);   // 66 ms alatt marad a 15 fps
+      maxDrawMs = 0;
     }
     pollButtons(now, redraw);
     flushPending(now);
@@ -207,6 +209,8 @@ void Display::loop() {
       step(now - lastStepMs, snap, cfg);
       lastStepMs = now; lastDrawMs = now; redraw = false;
       draw(snap, cfg);
+      const uint32_t took = millis() - now;
+      if (took > maxDrawMs) maxDrawMs = took;
     }
     vTaskDelay(pdMS_TO_TICKS(8));
   }
@@ -266,9 +270,11 @@ void Display::centered(const char* txt, int y, uint8_t size, uint16_t col) {
 }
 
 void Display::ring(int cx, int cy, int r, int th, float fillDeg, uint16_t col) {
-  for (int a = 0; a < 360; a += 3) {                          // 12 óránál indul, óramutató járásával, mint a dashboard
+  // 12 óránál indul, óramutató járásával, mint a dashboard. Az ívet kis körök sora adja, törtszám-pozícióval
+  // a nagy felbontású vásznon, így a szélek simák; a kitöltött szakasz színe a fillDeg-ig tart.
+  for (float a = 0.0f; a < 360.0f; a += 1.5f) {
     const float rad = a * 0.0174533f;
-    cv_->fillCircle(cx + lroundf(r * sinf(rad)), cy - lroundf(r * cosf(rad)), th / 2, a <= fillDeg ? col : kDark);
+    cv_->fillCircleF(cx + r * sinf(rad), cy - r * cosf(rad), th * 0.5f, a <= fillDeg ? col : kDark);
   }
 }
 
@@ -276,13 +282,13 @@ void Display::drawIcon(Icon k, int cx, int cy) {
   switch (k) {
     case Icon::Flame:                                          // ♨ felfűtés
     {
-      const int sway = (int)lroundf(sinf(animMs_ * 0.0048f));                         // lassú ringás
-      const int tipO = cy - 9 + (int)lroundf(2.2f * sinf(animMs_ * 0.0115f));         // villódzó csúcs
-      const int tipI = cy - 3 + (int)lroundf(1.6f * sinf(animMs_ * 0.0170f + 1.0f));
+      const float sway = sinf(animMs_ * 0.0048f);                                     // lassú ringás
+      const float tipO = cy - 9 + 2.2f * sinf(animMs_ * 0.0115f);                     // villódzó csúcs
+      const float tipI = cy - 3 + 1.6f * sinf(animMs_ * 0.0170f + 1.0f);
       cv_->fillCircle(cx, cy + 3, 6, kOrange);
-      cv_->fillTriangle(cx - 6, cy + 2, cx + 6, cy + 2, cx + sway, tipO, kOrange);
+      cv_->fillTriangleF(cx - 6, cy + 2, cx + 6, cy + 2, cx + sway, tipO, kOrange);
       cv_->fillCircle(cx, cy + 4, 3, kWarn);
-      cv_->fillTriangle(cx - 3, cy + 3, cx + 3, cy + 3, cx + sway, tipI, kWarn);
+      cv_->fillTriangleF(cx - 3, cy + 3, cx + 3, cy + 3, cx + sway, tipI, kWarn);
     }
       break;
     case Icon::Led:                                            // várakozás: zöld LED
@@ -298,10 +304,10 @@ void Display::drawIcon(Icon k, int cx, int cy) {
       cv_->fillCircle(cx, cy, 8, kWarn);
       cv_->fillCircle(cx - 3, cy - 2, 1, kBlack);
       cv_->fillCircle(cx + 3, cy - 2, 1, kBlack);
-      for (int a = 25; a <= 155; a += 10) { const float r = a * 0.0174533f; cv_->drawPixel(cx + lroundf(4.5f * cosf(r)), cy + 1 + lroundf(4.0f * sinf(r)), kBlack); }
+      for (int a = 25; a <= 155; a += 10) { const float r = a * 0.0174533f; cv_->fillCircleF(cx + 4.5f * cosf(r), cy + 1 + 4.0f * sinf(r), 0.7f, kBlack); }
       break;
     case Icon::Power:                                          // kikapcsolva
-      for (int a = 40; a <= 320; a += 8) { const float r = a * 0.0174533f; cv_->fillCircle(cx + lroundf(7 * sinf(r)), cy - lroundf(7 * cosf(r)), 1, kGray); }
+      for (int a = 40; a <= 320; a += 4) { const float r = a * 0.0174533f; cv_->fillCircleF(cx + 7 * sinf(r), cy - 7 * cosf(r), 1.0f, kGray); }
       cv_->fillRect(cx - 1, cy - 9, 3, 9, kGray);
       break;
     case Icon::Warn:                                           // hiba
@@ -355,6 +361,7 @@ void Display::draw(const Snapshot& s, const Config& c) {
     cv_->fillRoundRect(14, 46, 100, 26, 6, kWhite);
     centered(toast_, 55, 1, kBlack);
   }
+  cv_->resolve();                                                   // 2x -> 1x lekicsinyítés (élsimítás)
   if (trans_) {
     const float p = (float)(animMs_ - transStart_) / 240.0f;
     if (p < 1.0f && prevBuf_) { composeSlide(p); return; }
@@ -371,24 +378,28 @@ void Display::water(const Snapshot& s, int cx, int cy, int R) {
   uint8_t wr, wg, wb; hslRgb(hue, 0.9f, 0.55f, wr, wg, wb);
   const uint16_t back = overNavy(wr, wg, wb, 0.16f), front = overNavy(wr, wg, wb, 0.27f);   // áttetsző víz, mint a weben
   const float ph1 = animMs_ * 0.0042f, ph2 = -animMs_ * 0.0029f + 1.7f;
-  for (int x = cx - R; x <= cx + R; ++x) {
-    const int dx = x - cx;
-    const int half = (int)sqrtf((float)(R * R - dx * dx));
-    const int yMin = cy - half, yMax = cy + half;
-    const int yb = (int)(top + 1.8f * sinf(dx * 0.26f + ph2) + 1.5f);
-    const int yf = (int)(top + 2.6f * sinf(dx * 0.17f + ph1));
-    const int a = yb > yMin ? yb : yMin, b = yf > yMin ? yf : yMin;
-    if (a <= yMax) cv_->drawFastVLine(x, a, yMax - a + 1, back);
-    if (b <= yMax) cv_->drawFastVLine(x, b, yMax - b + 1, front);
+  constexpr int S = SsCanvas::S;
+  // a nagy felbontású vászon minden oszlopára külön: a hullám és a kör széle törtszám-magassággal simán fut
+  for (int hx = (cx - R) * S; hx < (cx + R + 1) * S; ++hx) {
+    const float dx = (hx + 0.5f) / S - 0.5f - cx;
+    const float h2 = (float)R * R - dx * dx;
+    if (h2 <= 0) continue;
+    const float half = sqrtf(h2);
+    const float yMin = cy - half, yMax = cy + half;
+    const float yb = top + 1.8f * sinf(dx * 0.26f + ph2) + 1.5f;
+    const float yf = top + 2.6f * sinf(dx * 0.17f + ph1);
+    const float a = yb > yMin ? yb : yMin, b = yf > yMin ? yf : yMin;
+    if (a < yMax) cv_->columnHi(hx, a, yMax, back);
+    if (b < yMax) cv_->columnHi(hx, b, yMax, front);
   }
   if (s.heat == HeatPhase::Heating && s.active >= 0) {              // fűtéskor buborékok emelkednek
     for (int i = 0; i < 5; ++i) {
       const float ph = fmodf(animMs_ / (2400.0f + i * 350.0f) + i * 0.21f, 1.0f);
-      const int by = (int)(cy + R - 3 - ph * (2.0f * R * 0.85f));
-      const int bx = cx + (int)(R * 0.5f * sinf(i * 2.3f + ph * 4.0f));
-      const int ddx = bx - cx, ddy = by - cy;
-      if (by < (int)top + 2 || ddx * ddx + ddy * ddy > (R - 2) * (R - 2)) continue;
-      cv_->fillCircle(bx, by, (i & 1) ? 2 : 1, c565(120, 150, 190));
+      const float by = cy + R - 3 - ph * (2.0f * R * 0.85f);
+      const float bx = cx + R * 0.5f * sinf(i * 2.3f + ph * 4.0f);
+      const float ddx = bx - cx, ddy = by - cy;
+      if (by < top + 2 || ddx * ddx + ddy * ddy > (R - 2.0f) * (R - 2.0f)) continue;
+      cv_->fillCircleF(bx, by, (i & 1) ? 1.8f : 1.1f, c565(120, 150, 190));
     }
   }
 }
@@ -397,13 +408,8 @@ void Display::water(const Snapshot& s, int cx, int cy, int R) {
 // korlátozza. Ezt a felhasználónak jól láthatóan tudnia kell, ezért a főoldal közepét teljesen ez foglalja el.
 void Display::sensorFaultView() {
   const bool blink = ((animMs_ / 500) & 1) != 0;
-  cv_->setTextSize(5); cv_->setTextColor(kBad);
-  cv_->setCursor(64 - 12, 5); cv_->print("?");                        // nagy piros kérdőjel
-  static const char kHead[] = "HOMERO HIBA";
-  const int hx = (W - (int)(sizeof(kHead) - 1) * 6) / 2;              // félkövér hatás: kétszer, 1 px eltolással
-  cv_->setTextSize(1); cv_->setTextColor(kBad);
-  cv_->setCursor(hx, 49); cv_->print(kHead);
-  cv_->setCursor(hx + 1, 49); cv_->print(kHead);
+  centered("?", 5, 5, kBad);                                          // nagy piros kérdőjel
+  centered("HOMERO HIBA", 49, 1, kBad);
   centered("Vizhofok ismeretlen", 61, 1, kWarn);
   centered("Beepitett termosztat", 71, 1, kWarn);
   centered("aktiv futes!", 81, 1, kWarn);
@@ -448,7 +454,7 @@ void Display::pageHome(const Snapshot& s, const Config& c) {
     }
     if (!off) {
       const float rad = clampf(dispTarget_ / kScale, 0, 1) * 360.0f * 0.0174533f;
-      for (int rr = r - 7; rr <= r + 6; rr += 2) cv_->fillCircle(cx + lroundf(rr * sinf(rad)), cy - lroundf(rr * cosf(rad)), 1, kWhite);
+      for (float rr = r - 7.0f; rr <= r + 6.0f; rr += 0.75f) cv_->fillCircleF(cx + rr * sinf(rad), cy - rr * cosf(rad), 0.9f, kWhite);
     }
 
     // nagy szám
@@ -459,7 +465,7 @@ void Display::pageHome(const Snapshot& s, const Config& c) {
       cv_->setTextSize(3); cv_->setTextColor(kWhite);
       int16_t x1, y1; uint16_t w, h; cv_->getTextBounds(tbuf, 0, 0, &x1, &y1, &w, &h);
       cv_->setCursor(cx - (int)w / 2 - 4, 22); cv_->print(tbuf);
-      cv_->setTextSize(1); cv_->setTextColor(kGray); cv_->setCursor(cx + (int)w / 2 - 1, 24); cv_->print("C");
+      cv_->setTextSize(1); cv_->setTextColor(kGray); cv_->setCursor(cx + (int)w / 2 + 2, 24); cv_->print("C");
     }
     if (!off) drawIcon(icon, cx, 67);
 

@@ -2,9 +2,9 @@
 
 Állapot: 2026. október 25. · szoftver v0.2 · ESP32-S3 N16R8 · PlatformIO + Arduino
 
-> **Frissítés (2026-11-08, r004):** a tulajdonos szerint a firmware **működik**, a kijelző (LCD) és a beállítások menü is megvan.
+> **Frissítés (2026-11-09, r005):** a tulajdonos szerint a firmware **működik**, a kijelző (LCD) és a beállítások menü is megvan.
 > Az alábbi "nem kipróbált", "[MEGÍRVA]" és "nincs lefordítva" állítások ezért **részben elavultak**; a pontosításuk a 8. fejezet T12 teendője.
-> A 2026-11-08-i kódátnézés (csak olvasás, futtatás nélkül) teendőit a **8. fejezet** gyűjti; a T1-T8 javításai az **r003**-ban, a T9-T11 döntései az **r004**-ben vannak (PC-s tesztek zöldek, ESP32-re nem fordítva, hardveren nem próbálva).
+> A 2026-11-08-i kódátnézés (csak olvasás, futtatás nélkül) teendőit a **8. fejezet** gyűjti; a T1-T8 javításai az **r003**-ban, a T9-T11 döntései az **r004**-ben, a kijelző élsimítása (T14) az **r005**-ben vannak (PC-s tesztek zöldek, a kijelzőkód PC-n a valódi GFX-szel lefordítva és renderelve, ESP32-re nem fordítva, hardveren nem próbálva).
 
 > **Fontos:** ez egy **terv** és egy **megírt, de nem kipróbált** első változat.
 > A kódot a PlatformIO-s teljes build még **nem futtatta le**, **nincs linkelve, feltöltve, futtatva**, hardveren **semmi nem futott**,
@@ -39,7 +39,7 @@ BOM, lábkiosztás, állapotgép, tesztterv).
 | `Storage`: konfiguráció (NVS), napló (LittleFS), előzmény (PSRAM), trend (NVS) | [MEGÍRVA] | semmi | fordítás, LittleFS viselkedés |
 | `Comms`: WiFi, MQTT + Home Assistant discovery, webes API, OTA, értesítés | [MEGÍRVA] | semmi | fordítás, könyvtár-verziók, valódi HA |
 | `App`: Supervisor és a task-ok | [MEGÍRVA] | semmi | fordítás, futás közbeni időzítések |
-| `Display`: 1,44" ST7735, a dashboardot követő felület (gyűrűs hőmérő, ikonok, 4 oldal, UP/DOWN/PAGE gombok) | [MEGÍRVA] | a rajzoló kód valódi Adafruit GFX-szel PC-n renderelve (`docs/kijelzo_elonezet_*.png`), valódi fordítóval szintaxis-ellenőrizve | eszközön a kép-eltolás, olvashatóság, gombok |
+| `Display`: 1,44" ST7735, a dashboardot követő felület (gyűrűs hőmérő, ikonok, 4 oldal, UP/DOWN/PAGE gombok) | [MEGÍRVA] | a rajzoló kód valódi Adafruit GFX-szel PC-n renderelve (`docs/kijelzo_elonezet_*.png`; r005 óta újrarenderelhető: `tools/display_preview/build.sh`), valódi fordítóval szintaxis-ellenőrizve | eszközön a kép-eltolás, olvashatóság, gombok |
 | Webes felület (egy HTML, a firmware-be ágyazva) | [MEGÍRVA] | a JavaScript szintaxisa rendben, a grafikon-rajzoló mintaadattal fut | böngészős kipróbálás, telefonos nézet |
 | `platformio.ini`, partíciós tábla | [MEGÍRVA] | semmi | a `pio run` még nem futott le (a fejlesztői sandboxból a csomagregiszter nem érhető el) |
 | Hardver: kontaktorok, reteszelés, tápok, watchdog, kézi bypass | [TERV] | papíron (kapcsolási rajz, BOM) | minden |
@@ -217,13 +217,14 @@ A 230 V-os rész kivitelezését jogosult villanyszerelőnek kell végeznie. A r
 | v0.2 | Forrásonkénti hőfokhatár, garantált minimum, értesítés (alapból ki), vízkő-/fűtőelem-trend, NVS-be mentett idő, a webes felület beágyazása (LittleFS-független) |
 | r003 | Kódátnézés javításai (T1-T8): konfig-mentés holtpont és visszaállás, elavult szenzoradat észlelése, E10 számláló nyugtázáskor, célhőmérséklet-korlát és állapotszöveg a kijelzőn, eldobott parancsok jelzése, stack-mérés. Részletek: `CHANGELOG.md`. |
 | r004 | D15 döntés: hőmérő-hiba (E01) képernyő a kijelzőn; az OTA alapjelszó marad (T10); a `ConfigStore.cppold` és `index.htmlold` törölve (T11). |
+| r005 | A kijelző élsimítása (T14): `SsCanvas` 2x felbontású vászon lekicsinyítéssel, sima DejaVu betűk, törtszám-pozíciójú ív, víz és láng; PC-s előnézet: `tools/display_preview`. |
 
 ---
 
 ## 8. Teendők (kódátnézés, 2026-11-08, r002 alapján)
 
 A lista egy **statikus kódátnézésből** készült: a kód nem lett lefordítva és nem futott. A hibák gyanúk, amíg hardveren nincsenek igazolva.
-Minden lényeges módosítás új revíziót kap (a következő: **r005**).
+Minden lényeges módosítás új revíziót kap (a következő: **r006**).
 
 ### 8.1 Javítandó hibák
 
@@ -252,3 +253,10 @@ Minden lényeges módosítás új revíziót kap (a következő: **r005**).
 |---|---|---|
 | T12 | A `PROJECT.md` 2., 2.1 és 3. fejezetét, valamint a README-t és a rendszertervet a működő állapotra frissíteni (mi fordul, mi fut hardveren, mi igazolt). | nyitott |
 | T13 | Hardveren ellenőrizni az r003-at: a mentés kijelzőről és weben (T1), a stack-értékek (T8), az elavult-szenzor jelzés (T2: a DS18B20 lehúzása és a task lefagyasztása más eset!), a hőmérő-hiba képernyő (T9: DS18B20 lehúzása, a fedett kijelzőn a szöveg olvashatósága), `pio run` és `pio test -e native` eredménye. | nyitott |
+
+### 8.4 Kijelző minősége (r005)
+
+| # | Teendő | Állapot |
+|---|---|---|
+| T14 | A kijelző "kockás" volt: a beépített 5x7-es betű 3-5-szörös nagyításban, a gyűrű és a víz egész képpontos köröket rajzolt. **Megoldás:** a `lib/Display/SsCanvas.h` 2x felbontású vászonra rajzol (128 kB a PSRAM-ban), és átlagolva kicsinyít 128x128-ra. A szöveg sima, arányos DejaVu betűkészletekkel jelenik meg (`lib/Display/fonts/`), az ív, a víz, a láng és a buborékok törtszám-pozícióval rajzolódnak. A `kGray` világosabb lett (a vékony betűk kontrasztja miatt). | KÉSZ r005, hardveren nem próbálva |
+| T15 | Hardveren ellenőrizni az r005-öt: a kép élsimítása és olvashatósága a valódi 1,44"-os kijelzőn; a soros konzolon percenként megjelenő `[display] rajzolas max N ms` érték (a főoldal 66 ms-os, 15 fps-es ütemét tartja-e: N kisebb legyen 66-nál); a PSRAM-foglalás sikerült-e (különben `[display] nincs eleg memoria a vaszonhoz`, a kijelző nem indul). Ha lassú, az r004 kijelzőkódja a tartalék. | nyitott |
