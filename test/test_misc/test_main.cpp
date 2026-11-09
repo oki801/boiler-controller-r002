@@ -8,6 +8,7 @@
 #include "NotifyPolicy.h"
 #include "TrendMonitor.h"
 #include "Thermostat.h"
+#include "SensorFreshness.h"
 
 void setUp() {}
 void tearDown() {}
@@ -389,6 +390,35 @@ void test_config_target_validation() {
   c.hystC = 2.0f;  TEST_ASSERT_TRUE (validateConfig(c, err, sizeof(err)));
 }
 
+// ---- SensorFreshness ----
+void test_freshness_not_stale_before_first_reading() {
+  SensorFreshness f;
+  f.update(100000, 0);
+  TEST_ASSERT_FALSE(f.stale(100000, 5000));                 // seq == 0: még nem volt olvasás, nem elavulás
+}
+void test_freshness_stale_when_seq_stops() {
+  SensorFreshness f;
+  f.update(1000, 1);
+  f.update(2000, 2);
+  f.update(3000, 3);
+  TEST_ASSERT_FALSE(f.stale(8000, 5000));                   // pontosan 5000 ms: még friss
+  TEST_ASSERT_TRUE(f.stale(8001, 5000));                    // 5001 ms: elavult
+}
+void test_freshness_recovers_when_seq_moves() {
+  SensorFreshness f;
+  f.update(1000, 1);
+  f.update(9000, 1);
+  TEST_ASSERT_TRUE(f.stale(9000, 5000));
+  f.update(9100, 2);
+  TEST_ASSERT_FALSE(f.stale(9100, 5000));
+}
+void test_freshness_millis_wraparound() {
+  SensorFreshness f;
+  f.update(0xFFFFFF00u, 7);
+  TEST_ASSERT_FALSE(f.stale(0x00000400u, 5000));            // átfordult óra, ~1,3 s telt el
+  TEST_ASSERT_TRUE(f.stale(0x00002000u, 5000));             // ~8,4 s telt el
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_presence_basic);
@@ -436,5 +466,9 @@ int main(int, char**) {
   RUN_TEST(test_thermostat_invalid_temperature_does_not_block);
   RUN_TEST(test_thermostat_changing_target_reacts);
   RUN_TEST(test_config_target_validation);
+  RUN_TEST(test_freshness_not_stale_before_first_reading);
+  RUN_TEST(test_freshness_stale_when_seq_stops);
+  RUN_TEST(test_freshness_recovers_when_seq_moves);
+  RUN_TEST(test_freshness_millis_wraparound);
   return UNITY_END();
 }

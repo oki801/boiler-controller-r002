@@ -84,9 +84,15 @@ void Supervisor::netTask(void* p)     { static_cast<Supervisor*>(p)->netLoop(); 
 void Supervisor::logTask(void* p)     { static_cast<Supervisor*>(p)->logLoop(); }
 
 // ---------------------------------------------------------------- parancsok (szálbiztos kérések)
-void Supervisor::setMode(Mode m, int8_t f)   { Cmd c{kCmdMode, (int8_t)m, f}; xQueueSend(cmdQ_, &c, 0); }
-void Supervisor::setExtOk(uint8_t s, bool ok) { Cmd c{kCmdExtOk, (int8_t)s, (int8_t)ok}; xQueueSend(cmdQ_, &c, 0); }
-void Supervisor::ackFault()                  { Cmd c{kCmdAck, 0, 0}; xQueueSend(cmdQ_, &c, 0); }
+void Supervisor::postCmd(const Cmd& c) {
+  if (xQueueSend(cmdQ_, &c, 0) == pdTRUE) return;
+  Event e; e.type = EventType::System; e.ms = clock_.millis();
+  e.setMsg("parancs eldobva");                     // tele a sor: a kérés elveszett, ezt nem szabad némán elnyelni
+  bus_.publish(e);
+}
+void Supervisor::setMode(Mode m, int8_t f)   { Cmd c{kCmdMode, (int8_t)m, f}; postCmd(c); }
+void Supervisor::setExtOk(uint8_t s, bool ok) { Cmd c{kCmdExtOk, (int8_t)s, (int8_t)ok}; postCmd(c); }
+void Supervisor::ackFault()                  { Cmd c{kCmdAck, 0, 0}; postCmd(c); }
 void Supervisor::reboot() {
   log_.flush();
   time_.persist();
@@ -113,6 +119,7 @@ void Supervisor::drainCommands() {
       case kCmdAck:
         fsm_.ackFault();
         safety_.ack();
+        if (rstPrefs_.getUChar("rstc", 0)) rstPrefs_.putUChar("rstc", 0);   // E10 nyugtázása: a számláló is nulláz
         snprintf(m, sizeof(m), "ack");
         break;
     }
@@ -144,7 +151,8 @@ void Supervisor::controlLoop() {
 
   TickType_t tick = xTaskGetTickCount();
   bool kick = false, wasClosed = false;
-  uint32_t closedAt = 0;
+  uint32_t closedAt = 0, lastStackChkMs = 0;
+  UBaseType_t minStackFree = (UBaseType_t)-1;
 
   for (;;) {
     vTaskDelayUntil(&tick, pdMS_TO_TICKS(kControlPeriodMs));
@@ -157,6 +165,15 @@ void Supervisor::controlLoop() {
     const bool autoSense = digitalRead(pins::AUTO_SENSE) == LOW;
     SensorData sd;
     { Lock l(sensorMtx_); sd = sensor_; }
+    sensorFresh_.update(now, sd.seq);
+    const bool wasStale = sensorStale_;
+    sensorStale_ = sensorFresh_.stale(now, kSensorStaleMs);
+    if (sensorStale_) { sd.temp.valid = false; sd.pw.valid = false; }   // lefagyott SensorTask: a régi adat nem hiteles
+    if (sensorStale_ != wasStale) {
+      Event se; se.type = EventType::System; se.ms = now;
+      se.setMsg(sensorStale_ ? "szenzor adat elavult" : "szenzor adat friss");
+      bus_.publish(se);
+    }
 
     // --- szenzorhibák ---
     const bool closed = bank_.closedCount() > 0;
@@ -262,6 +279,17 @@ void Supervisor::controlLoop() {
 
     // --- tartós mentések ---
     if ((uint32_t)(now - lastEnergySaveMs_) >= kEnergyPersistMs) { lastEnergySaveMs_ = now; energyStore_.save(energy_); }
+    if ((uint32_t)(now - lastStackChkMs) >= 60000) {     // szabad stack: csak akkor jelez, ha új minimum
+      lastStackChkMs = now;
+      const UBaseType_t fr = uxTaskGetStackHighWaterMark(nullptr);
+      if (fr < minStackFree) {
+        minStackFree = fr;
+        Event se; se.type = EventType::System; se.ms = now;
+        char m[48]; snprintf(m, sizeof(m), "stack ctrl %u", (unsigned)fr);
+        se.setMsg(m);
+        bus_.publish(se);
+      }
+    }
     if (!rstCleared_ && now >= 600000UL) { rstPrefs_.putUChar("rstc", 0); rstCleared_ = true; }
 
     if ((uint32_t)(now - lastSnapMs_) >= 500) { lastSnapMs_ = now; buildSnapshot(cfg, in, now); }
@@ -272,6 +300,7 @@ void Supervisor::buildSnapshot(const Config& c, const SelectorInput& in, uint32_
   Snapshot s;
   SensorData sd;
   { Lock l(sensorMtx_); sd = sensor_; }
+  if (sensorStale_) { sd.temp.valid = false; sd.pw.valid = false; }
   s.uptimeS = now / 1000;
   s.timeValid = time_.isValid();
   s.timeEstimated = time_.estimated();

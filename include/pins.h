@@ -2,7 +2,7 @@
 #include <stdint.h>
 // ESP32-S3-WROOM-1 N16R8 lábkiosztás (lásd a rendszerterv 4. fejezete).
 // Kerülendő lábak ezen a modulon: 26-37 (flash és octal PSRAM), 19/20 (USB), 43/44 (UART0),
-// strapping: 0, 3, 45, 46. A GPIO48 a devkit RGB LED-je, ezért szintén kimarad.
+// strapping: 0, 3, 45, 46. A GPIO48 egyes devkiteken az RGB LED; a TFT_MISO-hoz csak helyfoglalóként van rendelve.
 namespace pins {
 constexpr uint8_t K_DRV[3]    = {4, 5, 6};      // kontaktor tekercs MOSFET kapu (alap: külső lehúzás)
 constexpr uint8_t ARM_EN      = 7;              // ARM-kapcsoló engedélyezés (külső lehúzással)
@@ -17,7 +17,7 @@ constexpr uint8_t LED_OK      = 2;
 constexpr uint8_t LED_ERR     = 47;
 // 1,44" ST7735 TFT (128x128, SPI, 3,3 V), hardveres SPI (FSPI, a GPIO-mátrixon át). A hátlap (BL) 3V3-ra kötve.
 // Bekötés: CS = GPIO10, DC/RS = GPIO12, RST = GPIO14, SCK/CLK = GPIO13, MOSI/SDI = GPIO11.
-constexpr uint8_t TFT_MISO      = 48;
+constexpr uint8_t TFT_MISO      = 48;   // csak helyfoglaló: az ST7735 nem küld adatot vissza
 constexpr uint8_t TFT_CS      = 10;
 constexpr uint8_t TFT_MOSI    = 11;
 constexpr uint8_t TFT_SCK     = 13;

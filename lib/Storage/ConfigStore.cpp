@@ -88,10 +88,15 @@ bool ConfigStore::begin() {
 Config ConfigStore::get() const { Lock l(mtx_); return cfg_; }
 
 void ConfigStore::toJson(JsonDocument& d, bool secrets) const {
-  // FONTOS: a `c` helyi másolat a függvény végén megszűnik, a JSON-t viszont a hívó csak utána írja ki.
-  // Az ArduinoJson a `const char[]` szövegeket mutatóként tárolná (nem másolja), ezért minden szöveget
-  // String-gé alakítunk, ami másolódik. Enélkül a /api/config és a mentett konfiguráció szemetet tartalmaz.
-  const Config c = get();
+  const Config c = get();      // a zár csak a másolás idejére kell
+  toJsonCfg(c, d, secrets);
+}
+
+// A `c` nem feltétlenül él addig, amíg a hívó a JSON-t kiírja. Az ArduinoJson a `const char[]` szövegeket
+// mutatóként tárolná (nem másolja), ezért minden szöveget String-gé alakítunk, ami másolódik. Enélkül a
+// /api/config és a mentett konfiguráció szemetet tartalmaz.
+// Zárat nem vesz (a patch() a zár alatt hívja): nem rekurzív mutexnél a get() ott holtpontot okozna.
+void ConfigStore::toJsonCfg(const Config& c, JsonDocument& d, bool secrets) {
   d["deviceId"] = String(c.deviceId);  d["preempt"] = c.preempt;
   d["logIntervalS"] = c.logIntervalS;  d["logRetentionDays"] = c.logRetentionDays;
   JsonObject t = d["timing"].to<JsonObject>();
@@ -132,9 +137,9 @@ void ConfigStore::toJson(JsonDocument& d, bool secrets) const {
   }
 }
 
-bool ConfigStore::save() {
+bool ConfigStore::save(const Config& c) {
   JsonDocument d;
-  toJson(d, true);
+  toJsonCfg(c, d, true);
   String s;
   serializeJson(d, s);
   return prefs_.putString("cfg", s) > 0;
@@ -145,9 +150,11 @@ bool ConfigStore::patch(JsonVariantConst j, char* err, size_t n) {
   Config c = cfg_;
   applyJson(c, j);
   if (!validateConfig(c, err, n)) return false;
+  // Előbb mentünk, és csak siker esetén cseréljük a futó konfigot: így a vezérlő, a kijelző és a web
+  // sosem látnak olyan értéket, ami nem került az NVS-be.
+  if (!save(c)) { snprintf(err, n, "NVS iras sikertelen"); return false; }
   cfg_ = c;
   loadedOk_ = true;
-  if (!save()) { snprintf(err, n, "NVS iras sikertelen"); return false; }
   version_ = version_ + 1;
   return true;
 }

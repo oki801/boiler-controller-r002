@@ -14,6 +14,7 @@
 #include <SafetyMonitor.h>
 #include <GuaranteeLogic.h>
 #include <Thermostat.h>
+#include <SensorFreshness.h>
 
 #include <SystemClock.h>
 #include <GpioContactorBank.h>
@@ -70,6 +71,7 @@ class Supervisor : public ICommandSink {
   void drainCommands();
   void buildSnapshot(const Config& c, const SelectorInput& in, uint32_t now);
   void publishSwitch(int8_t from, int8_t to, const char* reason);
+  void postCmd(const Cmd& c);                      // sorba állít; ha tele van, eseményt ír
 
   SystemClock   clock_;
   EventBus      bus_;
@@ -96,6 +98,8 @@ class Supervisor : public ICommandSink {
   CapGate       capGate_;
   Thermostat    thermo_;
   bool          guaranteeActive_ = false;
+  SensorFreshness sensorFresh_;
+  bool          sensorStale_ = false;
   Display       display_;
 
   QueueHandle_t cmdQ_ = nullptr;

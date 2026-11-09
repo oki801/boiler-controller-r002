@@ -6,3 +6,4 @@
 #define AP_PASSWORD          "bojler-setup"
 constexpr unsigned long kControlPeriodMs = 100;
 constexpr unsigned long kEnergyPersistMs = 600000UL;   // 10 perc
+constexpr unsigned long kSensorStaleMs = 5000;         // ennyi ideig nem frissülő szenzoradat elavultnak számít (E01)

@@ -42,6 +42,7 @@ class Display {
 
   void draw(const Snapshot& s, const Config& c);
   void pageHome(const Snapshot& s, const Config& c);
+  void sensorFaultView();                          // E01: nagy piros ? és figyelmeztetés (a víz hőfoka ismeretlen)
   void pageLog();
   void pageErrors(const Snapshot& s);
   void pageSettings(const Snapshot& s, const Config& c);

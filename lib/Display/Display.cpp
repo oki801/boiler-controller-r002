@@ -97,7 +97,7 @@ void Display::pushEvent(const Event& e) {
   else strlcpy(n.hm, "--:--", sizeof(n.hm));
   n.color = kWhite;
   switch (e.type) {
-    case EventType::Switch:  snprintf(n.text, sizeof(n.text), "Valt %d>%d %s", e.from + 1, e.to + 1, !strcmp(e.msg, "priority") ? "prio" : e.msg); n.color = kOk; break;
+    case EventType::Switch:  snprintf(n.text, sizeof(n.text), "Valt %c>%d %s", e.from >= 0 ? (char)('1' + e.from) : '-', e.to + 1, !strcmp(e.msg, "priority") ? "prio" : e.msg); n.color = kOk; break;
     case EventType::Error:   snprintf(n.text, sizeof(n.text), "%s %s", errorInfo(e.code).code, e.raised ? "fellepett" : "megszunt");
                              n.color = e.raised ? (errorInfo(e.code).sev >= Severity::Error ? kBad : kWarn) : kGray; break;
     case EventType::Command: snprintf(n.text, sizeof(n.text), "Parancs"); n.color = kGray; break;
@@ -150,7 +150,15 @@ void Display::onStep(int dir, uint32_t now) {
     float t = pendTarget_ >= 0 ? pendTarget_ : c.targetC;
     if (t <= 0)      t = dir > 0 ? lastOnTarget_ : 0;                           // ki -> utolsó bekapcsolt cél
     else if (dir < 0 && t <= 10) t = 0;                                         // 10 alatt kikapcsolva
-    else             t = clampf(t + dir, 10.0f, c.safety.tMaxC);
+    else {
+      float hi = c.safety.tMaxC;                                                 // a legmagasabb engedélyezett forrás-hőfokhatár felett
+      float capMax = 0;                                                          // a víz úgysem melegszik tovább
+      for (uint8_t i = 0; i < kSources; ++i) if (c.src[i].enabled && c.src[i].maxTempC > capMax) capMax = c.src[i].maxTempC;
+      if (capMax >= 10.0f && capMax < hi) hi = capMax;
+      float nt = t + dir;
+      if (dir > 0 && nt > hi) nt = (t > hi) ? t : hi;                            // növelés nem lépi át; a már magasabb cél marad
+      t = clampf(nt, 10.0f, c.safety.tMaxC);
+    }
     pendTarget_ = t;
     saveAtMs_ = now + 2500;                                                     // késleltetett mentés: kevesebb NVS-írás
   } else if (page_ == PgSettings) {
@@ -178,9 +186,15 @@ void Display::flushPending(uint32_t now) {
 
 void Display::loop() {
   bool redraw = true;
-  uint32_t lastDrawMs = 0, lastStepMs = millis();
+  uint32_t lastDrawMs = 0, lastStepMs = millis(), lastStackChkMs = 0;
+  UBaseType_t minStackFree = (UBaseType_t)-1;
   for (;;) {
     const uint32_t now = millis();
+    if ((uint32_t)(now - lastStackChkMs) >= 60000) {                      // szabad stack: csak új minimumnál ír
+      lastStackChkMs = now;
+      const UBaseType_t fr = uxTaskGetStackHighWaterMark(nullptr);
+      if (fr < minStackFree) { minStackFree = fr; Serial.printf("[stack] display szabad min: %u bajt\n", (unsigned)fr); }
+    }
     pollButtons(now, redraw);
     flushPending(now);
     if (page_ != PgHome && (uint32_t)(now - lastInputMs_) > 30000) { startTransition(); page_ = PgHome; scroll_ = 0; redraw = true; }   // visszatér a főoldalra
@@ -379,6 +393,23 @@ void Display::water(const Snapshot& s, int cx, int cy, int R) {
   }
 }
 
+// E01 (a hőmérő hibás vagy hiányzik): a víz hőfoka ismeretlen, a fűtést csak a bojler beépített termosztátja
+// korlátozza. Ezt a felhasználónak jól láthatóan tudnia kell, ezért a főoldal közepét teljesen ez foglalja el.
+void Display::sensorFaultView() {
+  const bool blink = ((animMs_ / 500) & 1) != 0;
+  cv_->setTextSize(5); cv_->setTextColor(kBad);
+  cv_->setCursor(64 - 12, 5); cv_->print("?");                        // nagy piros kérdőjel
+  static const char kHead[] = "HOMERO HIBA";
+  const int hx = (W - (int)(sizeof(kHead) - 1) * 6) / 2;              // félkövér hatás: kétszer, 1 px eltolással
+  cv_->setTextSize(1); cv_->setTextColor(kBad);
+  cv_->setCursor(hx, 49); cv_->print(kHead);
+  cv_->setCursor(hx + 1, 49); cv_->print(kHead);
+  centered("Vizhofok ismeretlen", 61, 1, kWarn);
+  centered("Beepitett termosztat", 71, 1, kWarn);
+  centered("aktiv futes!", 81, 1, kWarn);
+  centered("VIGYAZAT! FORRO VIZ!", 92, 1, blink ? kBad : kWhite);     // villogó figyelmeztetés
+}
+
 void Display::pageHome(const Snapshot& s, const Config& c) {
   const float target = pendTarget_ >= 0 ? pendTarget_ : c.targetC;
   const bool off = target <= 0 || s.mode == Mode::Off;
@@ -388,44 +419,53 @@ void Display::pageHome(const Snapshot& s, const Config& c) {
   Icon icon = Icon::Unknown; const char* text = "Nincs homero adat";
   const bool crit = s.errorMask & ((1u << (uint8_t)ErrorCode::E03) | (1u << (uint8_t)ErrorCode::E05) | (1u << (uint8_t)ErrorCode::E07));
   const bool fault = s.fsm == FsmState::Fault || crit;
+  bool anyUsable = false, anyCapped = false;                                // minden jelen lévő forrás hőfokhatáron van-e
+  for (uint8_t i = 0; i < kSources; ++i) if (s.enabled[i] && s.present[i]) { if (s.capped[i]) anyCapped = true; else if (!s.blocked[i]) anyUsable = true; }
+  const bool capHold = anyCapped && !anyUsable;
+  const bool sensorFault = !off && !fault && (s.errorMask & (1u << (uint8_t)ErrorCode::E01));   // fűtés engedélyezett, de a hőmérő nem látszik
   if (fault)                       { icon = Icon::Warn; snprintf(status, sizeof(status), "Hiba %s", s.fsm == FsmState::Fault ? errorInfo(s.fsmError).code : "!"); text = status; }
   else if (s.manualBypass)         { icon = Icon::Manual; text = "Kezi uzem (S1)"; }
   else if (off)                    { icon = Icon::Power; text = "Kikapcsolva"; }
+  else if (s.heat == HeatPhase::Heating && s.active < 0 && capHold) { icon = Icon::Smile; text = "Forras hofokhatar"; }
   else if (s.heat == HeatPhase::Heating && s.active < 0) { icon = Icon::Hourglass; text = "Nincs halozat"; }
   else if (s.heat == HeatPhase::Heating) { icon = Icon::Flame; text = s.guaranteeActive ? "Garancia: futes" : "Felfutes folyamatban"; }
   else if (s.heat == HeatPhase::Waiting) { icon = Icon::Led; text = "Varakozas"; }
   else if (s.heat == HeatPhase::Reached) { icon = Icon::Smile; text = "Hofok rendben"; }
 
-  // gyűrű: az átfutó (mért) hőmérsékletet mutatja, a fehér jelölő az átfutó célt
-  const int cx = 64, cy = 47, r = 40;
-  const bool haveT = s.tempValid && !off;
-  cv_->fillCircle(cx, cy, r - 3, kPanel);                             // a tárcsa sötét belseje (mint a weben)
-  if (!off && s.tempValid) water(s, cx, cy, r - 5);                  // víz a gyűrű belsejében
-  if (!haveT) ring(cx, cy, r, 6, -1, kDark);
-  else        ring(cx, cy, r, 6, clampf(dispTemp_ / kScale, 0, 1) * 360.0f, colorFromTemp(dispTemp_));
-  if (fault) {                                                       // hiba: lüktető piros gyűrű
-    const float pu = 0.5f + 0.5f * sinf(animMs_ * 0.0065f);
-    cv_->drawCircle(cx, cy, r + 4, c565((uint8_t)(110 + 120 * pu), 20, 20));
-  }
-  if (!off) {
-    const float rad = clampf(dispTarget_ / kScale, 0, 1) * 360.0f * 0.0174533f;
-    for (int rr = r - 7; rr <= r + 6; rr += 2) cv_->fillCircle(cx + lroundf(rr * sinf(rad)), cy - lroundf(rr * cosf(rad)), 1, kWhite);
-  }
+  if (sensorFault) {
+    sensorFaultView();
+  } else {
+    // gyűrű: az átfutó (mért) hőmérsékletet mutatja, a fehér jelölő az átfutó célt
+    const int cx = 64, cy = 47, r = 40;
+    const bool haveT = s.tempValid && !off;
+    cv_->fillCircle(cx, cy, r - 3, kPanel);                             // a tárcsa sötét belseje (mint a weben)
+    if (!off && s.tempValid) water(s, cx, cy, r - 5);                  // víz a gyűrű belsejében
+    if (!haveT) ring(cx, cy, r, 6, -1, kDark);
+    else        ring(cx, cy, r, 6, clampf(dispTemp_ / kScale, 0, 1) * 360.0f, colorFromTemp(dispTemp_));
+    if (fault) {                                                       // hiba: lüktető piros gyűrű
+      const float pu = 0.5f + 0.5f * sinf(animMs_ * 0.0065f);
+      cv_->drawCircle(cx, cy, r + 4, c565((uint8_t)(110 + 120 * pu), 20, 20));
+    }
+    if (!off) {
+      const float rad = clampf(dispTarget_ / kScale, 0, 1) * 360.0f * 0.0174533f;
+      for (int rr = r - 7; rr <= r + 6; rr += 2) cv_->fillCircle(cx + lroundf(rr * sinf(rad)), cy - lroundf(rr * cosf(rad)), 1, kWhite);
+    }
 
-  // nagy szám
-  if (off) { drawIcon(Icon::Power, cx, 47); }
-  else {
-    if (s.tempValid) snprintf(buf, sizeof(buf), "%d", (int)lroundf(dispTemp_)); else strlcpy(buf, "--", sizeof(buf));
-    char tbuf[8]; strlcpy(tbuf, buf, sizeof(tbuf));
-    cv_->setTextSize(3); cv_->setTextColor(kWhite);
-    int16_t x1, y1; uint16_t w, h; cv_->getTextBounds(tbuf, 0, 0, &x1, &y1, &w, &h);
-    cv_->setCursor(cx - (int)w / 2 - 4, 22); cv_->print(tbuf);
-    cv_->setTextSize(1); cv_->setTextColor(kGray); cv_->setCursor(cx + (int)w / 2 - 1, 24); cv_->print("C");
-  }
-  if (!off) drawIcon(icon, cx, 67);
+    // nagy szám
+    if (off) { drawIcon(Icon::Power, cx, 47); }
+    else {
+      if (s.tempValid) snprintf(buf, sizeof(buf), "%d", (int)lroundf(dispTemp_)); else strlcpy(buf, "--", sizeof(buf));
+      char tbuf[8]; strlcpy(tbuf, buf, sizeof(tbuf));
+      cv_->setTextSize(3); cv_->setTextColor(kWhite);
+      int16_t x1, y1; uint16_t w, h; cv_->getTextBounds(tbuf, 0, 0, &x1, &y1, &w, &h);
+      cv_->setCursor(cx - (int)w / 2 - 4, 22); cv_->print(tbuf);
+      cv_->setTextSize(1); cv_->setTextColor(kGray); cv_->setCursor(cx + (int)w / 2 - 1, 24); cv_->print("C");
+    }
+    if (!off) drawIcon(icon, cx, 67);
 
-  // állapotsor és célhőmérséklet
-  centered(text, 93, 1, kGray);
+    // állapotsor és célhőmérséklet
+    centered(text, 93, 1, kGray);
+  }
   if (!off) { snprintf(buf, sizeof(buf), "cel %.0fC%s", (double)target, pendTarget_ >= 0 ? "*" : ""); cv_->setTextSize(1); cv_->setTextColor(pendTarget_ >= 0 ? kWarn : kGray); cv_->setCursor(2, 2); cv_->print(buf); }
   if (time_.isValid()) { const uint16_t m = time_.minuteOfDay(); snprintf(buf, sizeof(buf), "%02u:%02u", m / 60, m % 60); cv_->setTextColor(kGray); cv_->setCursor(W - 32, 2); cv_->print(buf); }
 

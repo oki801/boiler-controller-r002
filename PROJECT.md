@@ -2,9 +2,13 @@
 
 Állapot: 2026. október 25. · szoftver v0.2 · ESP32-S3 N16R8 · PlatformIO + Arduino
 
+> **Frissítés (2026-11-08, r004):** a tulajdonos szerint a firmware **működik**, a kijelző (LCD) és a beállítások menü is megvan.
+> Az alábbi "nem kipróbált", "[MEGÍRVA]" és "nincs lefordítva" állítások ezért **részben elavultak**; a pontosításuk a 8. fejezet T12 teendője.
+> A 2026-11-08-i kódátnézés (csak olvasás, futtatás nélkül) teendőit a **8. fejezet** gyűjti; a T1-T8 javításai az **r003**-ban, a T9-T11 döntései az **r004**-ben vannak (PC-s tesztek zöldek, ESP32-re nem fordítva, hardveren nem próbálva).
+
 > **Fontos:** ez egy **terv** és egy **megírt, de nem kipróbált** első változat.
 > A kódot a PlatformIO-s teljes build még **nem futtatta le**, **nincs linkelve, feltöltve, futtatva**, hardveren **semmi nem futott**,
-> a 230 V-os rész **nincs megépítve**. Egyedül a hardverfüggetlen logikai réteg van PC-n tesztelve (88 teszt), és a teljes forráskód
+> a 230 V-os rész **nincs megépítve**. Egyedül a hardverfüggetlen logikai réteg van PC-n tesztelve (92 teszt), és a teljes forráskód
 > átment egy fordító-ellenőrzésen (lásd 2.1). Minden más állítás "megírva" vagy "terv".
 
 Kapcsolódó dokumentumok: `README.md` (használat), a rendszerterv dokumentum (22 fejezet: architektúra, kapcsolási rajz,
@@ -184,12 +188,16 @@ A folyékony, animált változat (`dashboard_v3.html`, `/dash3`) és az adatköt
 
 ---
 
+### D15. Érvénytelen hőmérő [ELÁGAZÁS D15]
+**Fűtés a bojler beépített termosztátjával tovább, a kijelzőn nagy figyelmeztetés (eldöntve, r004)** · időkorlátos lekapcsolás (nem kell).
+E01-nél (hiányzó, hibás vagy elavult hőmérő-adat) a vezérlő nem tudja a víz hőfokát, a termosztát `Unknown` fázisban nem tilt, az `overTemp` nem tud kiváltani. A védelmet a bojler saját termosztátja adja. Ezt a főoldalon jól látható piros `?` és a "VIGYAZAT! FORRO VIZ!" felirat jelzi. Kikapcsolt fűtésnél (cél 0 vagy `Off`) és zárolt hibánál (`Fault`) nem jelenik meg.
+
 ## 6. Javasolt lépések és kapuk
 
 | # | Lépés | Kapu (mikor léphetünk tovább) |
 |---|---|---|
 | 1 | `pio run -e esp32s3`, fordítási hibák javítása | tiszta fordítás |
-| 2 | `pio test -e native` | 88 teszt zöld |
+| 2 | `pio test -e native` | 92 teszt zöld |
 | 3 | Kisfeszültségű próbapad: 24 V, relék a kontaktorok helyett, kijelző, gomb | reteszelés, watchdog és ARM mérésekkel igazolva (T05-T10) |
 | 4 | Szenzorok: DS18B20, PZEM, jelenlét-optocsatolók | a mérések helyesek, a jelenlét-küszöb hangolva |
 | 5 | Hálózat: WiFi, web, MQTT, Home Assistant, OTA | 48 órás stabil futás |
@@ -207,3 +215,40 @@ A 230 V-os rész kivitelezését jogosult villanyszerelőnek kell végeznie. A r
 |---|---|
 | v0.1 | Core és Control (tesztelt), a hardver- és kommunikációs rétegek, webes felület, ST7735 kijelző, 24 órás előzmény, ESP32-S3 N16R8 kiosztás |
 | v0.2 | Forrásonkénti hőfokhatár, garantált minimum, értesítés (alapból ki), vízkő-/fűtőelem-trend, NVS-be mentett idő, a webes felület beágyazása (LittleFS-független) |
+| r003 | Kódátnézés javításai (T1-T8): konfig-mentés holtpont és visszaállás, elavult szenzoradat észlelése, E10 számláló nyugtázáskor, célhőmérséklet-korlát és állapotszöveg a kijelzőn, eldobott parancsok jelzése, stack-mérés. Részletek: `CHANGELOG.md`. |
+| r004 | D15 döntés: hőmérő-hiba (E01) képernyő a kijelzőn; az OTA alapjelszó marad (T10); a `ConfigStore.cppold` és `index.htmlold` törölve (T11). |
+
+---
+
+## 8. Teendők (kódátnézés, 2026-11-08, r002 alapján)
+
+A lista egy **statikus kódátnézésből** készült: a kód nem lett lefordítva és nem futott. A hibák gyanúk, amíg hardveren nincsenek igazolva.
+Minden lényeges módosítás új revíziót kap (a következő: **r005**).
+
+### 8.1 Javítandó hibák
+
+| # | Prio | Teendő | Részlet | Állapot |
+|---|---|---|---|---|
+| T1 | P1 | `ConfigStore::patch` önzárolás és mentési hiba | A `patch()` tartja az `mtx_` mutexet, majd a `save()` → `toJson()` → `get()` ugyanazt újra zárolja. A `Mutex` (`xSemaphoreCreateMutex`) nem rekurzív, ezért holtpont várható a kijelzőről vagy a webről indított mentésnél. Ráadásul ha az NVS-írás elbukik, a `cfg_` már felül van írva, a `version_` viszont nem nő: a vezérlő a régi, a kijelző és a web az új értéket használja. | KÉSZ r003: a `patch()` előbb ment, csak sikeres NVS-írás után cseréli a futó konfigot; a `save()`/`toJsonCfg()` nem vesz zárat |
+| T2 | P1 | Elavult szenzoradat észlelése | A `sensorTask` nincs a watchdogon. Ha lefagy, a vezérlés a régi hőmérséklettel dolgozik tovább, és az `valid` marad. Kell egy maximum-életkor (pl. 5 s) a `seq` változására: lejárat után a hőmérséklet és a PZEM érvénytelen (E01). | KÉSZ r003: új `SensorFreshness` (4 teszt), 5 s után hőmérséklet és PZEM érvénytelen (E01), esemény a naplóba |
+| T3 | P2 | E10 számláló nyugtázáskor | A `rstc` csak 10 perc futás után nullázódik. Nyugtázás, majd 10 percen belüli újraindulás (akár áramszünet) újra zárolt E10-et ad. A nyugtázásnak nullázni kell. | KÉSZ r003: a nyugtázás nullázza a `rstc` számlálót |
+| T4 | P2 | Cél a hőfokhatár fölött | A célhőmérséklet a kijelzőn a védelmi határig (75 °C) léptethető, a források `maxTempC`-je alapból 65 °C. A víz elérheti a hatást, a termosztát mégis `Heating`-ben marad, a kijelzőn "Nincs halozat" látszik. Kell: a léptetés clampelése a legmagasabb engedélyezett forrás-hőfokhatárra, és külön állapotszöveg, ha minden jelen lévő forrás hőfokhatáron van. A `validateConfig` nem módosítandó (hibás konfig = teljes visszaállás, E12). | KÉSZ r003: a léptetés a legmagasabb engedélyezett forrás-hőfokhatárnál megáll; új állapotszöveg: "Forras hofokhatar" |
+| T5 | P3 | Eldobott parancsok jelzése | A `xQueueSend(..., 0)` hívások eredménye nincs ellenőrizve, tele sor esetén a nyugtázás vagy módváltás némán elvész. Kell egy esemény a naplóba. | KÉSZ r003: `postCmd()`, eldobott parancsról "parancs eldobva" esemény |
+| T6 | P3 | Naplóoldal `Valt 0>1` | Induláskor a `from = -1` miatt "0" jelenik meg. | KÉSZ r003 |
+| T7 | P3 | `pins.h` ellentmondás | A megjegyzés szerint a GPIO48 kimarad, de a `TFT_MISO = 48`. A kijelzőnek nincs MISO-ja, a láb csak helyfoglaló; a megjegyzést pontosítani kell. | KÉSZ r003 |
+| T8 | P3 | Stack-méretek mérése | A control és display task stackje 6144 byte, a `Config` kb. 1 KB, a `snprintf("%f")` is sokat használ. Kell egy szabad-stack (high-water mark) kiírás. | KÉSZ r003: 60 s-onként ellenőriz, csak új minimumnál jelez (control: napló-esemény, display: soros konzol) |
+
+### 8.2 Döntést igénylő pontok
+
+| # | Téma | Kérdés | Állapot |
+|---|---|---|---|
+| T9 | Érvénytelen hőmérő (**D15**) | **Eldöntve:** a fűtés a bojler beépített termosztátjával tovább megy (nincs időkorlát, nincs automatikus lekapcsolás), de a kijelző főoldalán E01-nél nagy piros `?`, "HOMERO HIBA", "Vizhofok ismeretlen / Beepitett termosztat aktiv futes!" és villogó "VIGYAZAT! FORRO VIZ!" jelenik meg. KÉSZ r004 (kijelzőn hardveren nem próbálva). | döntve, KÉSZ r004 |
+| T10 | Alapértelmezett jelszavak | **Eldöntve:** marad, mert a repó hamarosan újra privát lesz. A firmware nem változott. Ha az eszköz bárhol elérhetővé válik, az OTA-, web- és AP-jelszót cserélni kell (a `defaultCreds` jelzés ezt mutatja). | döntve, nincs változás |
+| T11 | Maradvány fájlok | **Eldöntve és KÉSZ r004:** törölve a `lib/Storage/ConfigStore.cppold` és a `data/www/index.htmlold` (utóbbi azonos volt az `index.html`-lel, a kódban nem hivatkozott rájuk senki). A `dashboard.html`, `dashboard_v2.html`, `dashboard_v3.html` és az `index.html` **marad**: a `scripts/embed_ui.py` beágyazza őket, a firmware kiszolgálja (`/`, `/dash`, `/dash2`, `/dash3`). | KÉSZ r004 |
+
+### 8.3 Dokumentáció és ellenőrzés
+
+| # | Teendő | Állapot |
+|---|---|---|
+| T12 | A `PROJECT.md` 2., 2.1 és 3. fejezetét, valamint a README-t és a rendszertervet a működő állapotra frissíteni (mi fordul, mi fut hardveren, mi igazolt). | nyitott |
+| T13 | Hardveren ellenőrizni az r003-at: a mentés kijelzőről és weben (T1), a stack-értékek (T8), az elavult-szenzor jelzés (T2: a DS18B20 lehúzása és a task lefagyasztása más eset!), a hőmérő-hiba képernyő (T9: DS18B20 lehúzása, a fedett kijelzőn a szöveg olvashatósága), `pio run` és `pio test -e native` eredménye. | nyitott |

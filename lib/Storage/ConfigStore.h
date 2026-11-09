@@ -17,7 +17,8 @@ class ConfigStore {
   bool loadedOk() const { return loadedOk_; }
  private:
   static bool applyJson(Config& c, JsonVariantConst j);
-  bool save();
+  static void toJsonCfg(const Config& c, JsonDocument& d, bool secrets);   // a megadott példányból, zár nélkül
+  bool save(const Config& c);                                              // NVS-írás, zárat nem vesz
   mutable Mutex mtx_;
   Config   cfg_;
   Preferences prefs_;
