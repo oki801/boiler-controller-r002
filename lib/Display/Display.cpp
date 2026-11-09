@@ -2,6 +2,15 @@
 #include <pins.h>
 #include <ArduinoJson.h>
 #include <math.h>
+#include <Adafruit_GFX.h>
+#include <U8g2_for_Adafruit_GFX.h>   // lib_deps: olikraus/U8g2_for_Adafruit_GFX
+
+// A kis (1-es méretű) szövegek betűtípusa. Egy sorban cserélhető:
+// Az _te végű változatok a Latin Extended-A tartományt is tartalmazzák (ő, ű, é, á ...).
+//   u8g2_font_helvR08_te   - arányos, 8 px, jól olvasható (alap)
+//   u8g2_font_helvB08_te   - ugyanez félkövéren
+//   u8g2_font_helvR10_te   - nagyobb (10 px), kevesebb szöveg fér egy sorba
+#define SMALL_FONT u8g2_font_helvR08_te
 
 namespace {
 constexpr int W = 128, H = 128;
@@ -40,26 +49,97 @@ uint16_t colorFromTemp(float t) { float h = 220.0f - (t / kScale) * 220.0f; if (
 
 const char* shortErr(ErrorCode c) {
   switch (c) {
-    case ErrorCode::E01: return "Homero hiba";
-    case ErrorCode::E02: return "PZEM nem valaszol";
-    case ErrorCode::E03: return "Reteszeles hiba";
-    case ErrorCode::E04: return "Nem huz be";
+    case ErrorCode::E01: return "Hőmérő hiba";
+    case ErrorCode::E02: return "PZEM nem válaszol";
+    case ErrorCode::E03: return "Reteszelés hiba";
+    case ErrorCode::E04: return "Nem húz be";
     case ErrorCode::E05: return "Beragadt kontakt";
-    case ErrorCode::E06: return "Feszultseg hibas";
-    case ErrorCode::E07: return "Tuluhomerseklet";
+    case ErrorCode::E06: return "Feszültség hibás";
+    case ErrorCode::E07: return "Túlhőmérséklet";
     case ErrorCode::E08: return "WiFi/MQTT kiesett";
-    case ErrorCode::E09: return "Nincs pontos ido";
+    case ErrorCode::E09: return "Nincs pontos idő";
     case ErrorCode::E10: return "Gyakori reset";
-    case ErrorCode::E11: return "Tarhely baj";
-    case ErrorCode::E12: return "Konfig hibas";
-    case ErrorCode::E13: return "Sok kapcsolas";
-    case ErrorCode::E14: return "Nincs halozat";
-    case ErrorCode::E15: return "Vizko gyanu";
-    case ErrorCode::E16: return "Futoelem gyenge";
+    case ErrorCode::E11: return "Tárhely baj";
+    case ErrorCode::E12: return "Konfig hibás";
+    case ErrorCode::E13: return "Sok kapcsolás";
+    case ErrorCode::E14: return "Nincs hálózat";
+    case ErrorCode::E15: return "Vízkő gyanú";
+    case ErrorCode::E16: return "Fűtőelem gyenge";
     default:             return "";
   }
 }
 float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+// ------------------------------------------------------------------ éles kis szöveg
+// A kis szövegeket NEM a 2x-es (élsimított) vászonra rajzoljuk, mert a 2x -> 1x lekicsinyítés
+// (resolve) a vékony, 1 pixeles betűvonalakat elmossa. Ehelyett a rajzolás közben csak
+// "sorba állítjuk" őket, és a resolve UTÁN, a kész 1x-es képre rajzoljuk, pixelpontosan.
+// A nagy számok és a nagy piros kérdőjel továbbra is a vásznon marad (élsimítva).
+class BufGfx : public Adafruit_GFX {            // Adafruit_GFX a kész 128x128 RGB565 pufferre
+ public:
+  BufGfx() : Adafruit_GFX(W, H) {}
+  void bind(uint16_t* b) { buf_ = b; }
+  void drawPixel(int16_t x, int16_t y, uint16_t c) override {
+    if (buf_ && x >= 0 && y >= 0 && x < W && y < H) buf_[y * W + x] = c;
+  }
+ private:
+  uint16_t* buf_ = nullptr;
+};
+
+struct TextItem { int16_t x, y; uint16_t col; bool top; char s[32]; };
+constexpr int kMaxText = 48;
+TextItem gText[kMaxText];
+int gTextN = 0;
+BufGfx gGfx;
+U8G2_FOR_ADAFRUIT_GFX gU8;
+bool gU8Ready = false;
+
+void u8Init() {
+  if (gU8Ready) return;
+  gU8.begin(gGfx);
+  gU8.setFontMode(1);                            // átlátszó háttér
+  gU8.setFontDirection(0);
+  gU8.setFont(SMALL_FONT);
+  gU8Ready = true;
+}
+int textWidth(const char* s) { u8Init(); return gU8.getUTF8Width(s); }
+// UTF-8-biztos vágás: legfeljebb maxBytes bájt, és nem hagy félbevágott ékezetes karaktert a végén
+void utf8Trim(char* s, size_t maxBytes) {
+  size_t n = strlen(s);
+  if (n > maxBytes) { n = maxBytes; s[n] = 0; }
+  size_t i = n;
+  while (i > 0 && ((uint8_t)s[i - 1] & 0xC0) == 0x80) --i;           // a záró folytatóbájtok átlépése
+  if (i > 0) {
+    const uint8_t lead = (uint8_t)s[i - 1];
+    const size_t need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
+    if (n - (i - 1) < need) s[i - 1] = 0;                            // befejezetlen karakter: eldobjuk
+  }
+}
+// y = a nagybetűk felső széle (mint az eddigi setCursor y-ja); top = a "MENTVE" üzenet, ez mindig látszik
+void queueText(int x, int y, const char* s, uint16_t col, bool top = false) {
+  if (gTextN >= kMaxText) return;
+  TextItem& t = gText[gTextN++];
+  t.x = (int16_t)x; t.y = (int16_t)y; t.col = col; t.top = top;
+  strlcpy(t.s, s, sizeof(t.s));
+  utf8Trim(t.s, sizeof(t.s) - 1);
+}
+void flushText(uint16_t* buf, bool toast) {
+  u8Init();
+  gGfx.bind(buf);
+  gU8.setFont(SMALL_FONT);
+  gU8.setFontMode(1);
+  const int asc = gU8.getFontAscent();
+  for (int i = 0; i < gTextN; ++i) {
+    const TextItem& t = gText[i];
+    if (toast && !t.top) {                       // az üzenet-doboz (14,46 - 114,72) alatti szöveg ne látsszon át
+      const int w = gU8.getUTF8Width(t.s);
+      if (t.x < 114 && t.x + w > 14 && t.y < 72 && t.y + asc + 2 > 46) continue;
+    }
+    gU8.setForegroundColor(t.col);
+    gU8.drawUTF8(t.x, t.y + asc, t.s);           // a U8g2 az alapvonalat várja
+  }
+  gTextN = 0;
+}
 }  // namespace
 
 uint8_t Display::pins_page() { return pins::BTN; }
@@ -97,17 +177,17 @@ void Display::pushEvent(const Event& e) {
   else strlcpy(n.hm, "--:--", sizeof(n.hm));
   n.color = kWhite;
   switch (e.type) {
-    case EventType::Switch:  snprintf(n.text, sizeof(n.text), "Valt %c>%d %s", e.from >= 0 ? (char)('1' + e.from) : '-', e.to + 1, !strcmp(e.msg, "priority") ? "prio" : e.msg); n.color = kOk; break;
-    case EventType::Error:   snprintf(n.text, sizeof(n.text), "%s %s", errorInfo(e.code).code, e.raised ? "fellepett" : "megszunt");
+    case EventType::Switch:  snprintf(n.text, sizeof(n.text), "Vált %c>%d %s", e.from >= 0 ? (char)('1' + e.from) : '-', e.to + 1, !strcmp(e.msg, "priority") ? "prio" : e.msg); n.color = kOk; break;
+    case EventType::Error:   snprintf(n.text, sizeof(n.text), "%s %s", errorInfo(e.code).code, e.raised ? "fellépett" : "megszűnt");
                              n.color = e.raised ? (errorInfo(e.code).sev >= Severity::Error ? kBad : kWarn) : kGray; break;
     case EventType::Command: snprintf(n.text, sizeof(n.text), "Parancs"); n.color = kGray; break;
     default:
       if (!strncmp(e.msg, "garantalt", 9)) snprintf(n.text, sizeof(n.text), "Garancia %s", strstr(e.msg, "be") ? "be" : "ki");
-      else if (!strncmp(e.msg, "boot", 4)) snprintf(n.text, sizeof(n.text), "Indulas");
+      else if (!strncmp(e.msg, "boot", 4)) snprintf(n.text, sizeof(n.text), "Indulás");
       else snprintf(n.text, sizeof(n.text), "%s", e.msg);
       n.color = kGray; break;
   }
-  n.text[15] = 0;                                                  // a sorba (21 karakter - idő) ennyi fér
+  utf8Trim(n.text, 15);                                            // a sorba (21 karakter - idő) ennyi fér; UTF-8-biztos vágás
   Lock l(evMtx_);
   ev_[evHead_] = n;
   evHead_ = (evHead_ + 1) % kEv;
@@ -137,7 +217,7 @@ void Display::pollButtons(uint32_t now, bool& redraw) {
 
 void Display::onPage(bool longPress, uint32_t now) {
   lastInputMs_ = now;
-  if (longPress) { sink_.ackFault(); strlcpy(toast_, "NYUGTAZVA", sizeof(toast_)); toastUntilMs_ = animMs_ + 1500; return; }
+  if (longPress) { sink_.ackFault(); strlcpy(toast_, "NYUGTÁZVA", sizeof(toast_)); toastUntilMs_ = animMs_ + 1500; return; }
   startTransition();
   page_ = (page_ + 1) % kPages;
   scroll_ = 0;
@@ -179,7 +259,7 @@ void Display::flushPending(uint32_t now) {
   char err[64] = "";
   const bool ok = cfg_.patch(d.as<JsonVariantConst>(), err, sizeof(err));
   if (ok && pendTarget_ > 0) lastOnTarget_ = pendTarget_;
-  strlcpy(toast_, ok ? "MENTVE" : "NEM MENTHETO", sizeof(toast_));
+  strlcpy(toast_, ok ? "MENTVE" : "MENTÉS HIBA", sizeof(toast_));
   toastUntilMs_ = animMs_ + 1500;
   pendTarget_ = -1; pendHyst_ = -1;
 }
@@ -261,7 +341,11 @@ void Display::name(const Config& c, uint8_t i, char* out, size_t n) const {
 }
 
 void Display::centered(const char* txt, int y, uint8_t size, uint16_t col) {
-  int16_t x1, y1; uint16_t w, h;
+  if (size == 1) {                                                  // kis szöveg: éles, a resolve után rajzolódik
+    queueText((W - textWidth(txt)) / 2, y, txt, col);
+    return;
+  }
+  int16_t x1, y1; uint16_t w, h;                                    // nagy szöveg (pl. a piros kérdőjel): marad a vásznon
   cv_->setTextSize(size);
   cv_->getTextBounds(txt, 0, 0, &x1, &y1, &w, &h);
   cv_->setTextColor(col);
@@ -317,7 +401,7 @@ void Display::drawIcon(Icon k, int cx, int cy) {
       break;
     case Icon::Manual:                                         // kézi üzem (S1)
       cv_->drawRoundRect(cx - 10, cy - 7, 20, 14, 3, kWhite);
-      cv_->setTextSize(1); cv_->setTextColor(kWhite); cv_->setCursor(cx - 5, cy - 3); cv_->print("S1");
+      queueText(cx - textWidth("S1") / 2, cy - 4, "S1", kWhite);
       break;
     case Icon::Hourglass:                                      // fűtene, de nincs használható hálózat
       cv_->fillTriangle(cx - 6, cy - 8, cx + 6, cy - 8, cx, cy, kWarn);
@@ -350,6 +434,7 @@ void Display::footer(const Snapshot& s) {
 void Display::draw(const Snapshot& s, const Config& c) {
   cv_->fillScreen(kBlack);
   cv_->setTextWrap(false);
+  gTextN = 0;                                                       // a kis szövegek sorát minden képkockánál újraépítjük
   switch (page_) {
     case PgHome:     pageHome(s, c); break;
     case PgLog:      pageLog(); break;
@@ -357,11 +442,13 @@ void Display::draw(const Snapshot& s, const Config& c) {
     default:         pageSettings(s, c); break;
   }
   footer(s);
-  if ((int32_t)(toastUntilMs_ - animMs_) > 0) {
+  const bool toastOn = (int32_t)(toastUntilMs_ - animMs_) > 0;
+  if (toastOn) {
     cv_->fillRoundRect(14, 46, 100, 26, 6, kWhite);
-    centered(toast_, 55, 1, kBlack);
+    queueText((W - textWidth(toast_)) / 2, 55, toast_, kBlack, true);
   }
   cv_->resolve();                                                   // 2x -> 1x lekicsinyítés (élsimítás)
+  flushText(const_cast<uint16_t*>(cv_->getBuffer()), toastOn);      // kis szövegek éles, pixelpontos rajzolása a kész képre
   if (trans_) {
     const float p = (float)(animMs_ - transStart_) / 240.0f;
     if (p < 1.0f && prevBuf_) { composeSlide(p); return; }
@@ -408,12 +495,12 @@ void Display::water(const Snapshot& s, int cx, int cy, int R) {
 // korlátozza. Ezt a felhasználónak jól láthatóan tudnia kell, ezért a főoldal közepét teljesen ez foglalja el.
 void Display::sensorFaultView() {
   const bool blink = ((animMs_ / 500) & 1) != 0;
-  centered("?", 5, 5, kBad);                                          // nagy piros kérdőjel
-  centered("HOMERO HIBA", 49, 1, kBad);
-  centered("Vizhofok ismeretlen", 61, 1, kWarn);
-  centered("Beepitett termosztat", 71, 1, kWarn);
-  centered("aktiv futes!", 81, 1, kWarn);
-  centered("VIGYAZAT! FORRO VIZ!", 92, 1, blink ? kBad : kWhite);     // villogó figyelmeztetés
+  centered("?", 5, 5, kBad);                                          // nagy piros kérdőjel (változatlan, a vásznon marad)
+  centered("HŐMÉRŐ HIBA", 49, 1, kBad);
+  centered("Vízhőfok ismeretlen", 61, 1, kWarn);
+  centered("Beépített termosztát", 71, 1, kWarn);
+  centered("aktív fűtés!", 81, 1, kWarn);
+  centered("VIGYÁZAT! FORRÓ VÍZ!", 92, 1, blink ? kBad : kWhite);     // villogó figyelmeztetés
 }
 
 void Display::pageHome(const Snapshot& s, const Config& c) {
@@ -422,7 +509,7 @@ void Display::pageHome(const Snapshot& s, const Config& c) {
   char buf[32], status[32];
 
   // állapot (a webes dashboard megfeleltetése): ikon + szöveg
-  Icon icon = Icon::Unknown; const char* text = "Nincs homero adat";
+  Icon icon = Icon::Unknown; const char* text = "Nincs hőmérő adat";
   const bool crit = s.errorMask & ((1u << (uint8_t)ErrorCode::E03) | (1u << (uint8_t)ErrorCode::E05) | (1u << (uint8_t)ErrorCode::E07));
   const bool fault = s.fsm == FsmState::Fault || crit;
   bool anyUsable = false, anyCapped = false;                                // minden jelen lévő forrás hőfokhatáron van-e
@@ -430,13 +517,13 @@ void Display::pageHome(const Snapshot& s, const Config& c) {
   const bool capHold = anyCapped && !anyUsable;
   const bool sensorFault = !off && !fault && (s.errorMask & (1u << (uint8_t)ErrorCode::E01));   // fűtés engedélyezett, de a hőmérő nem látszik
   if (fault)                       { icon = Icon::Warn; snprintf(status, sizeof(status), "Hiba %s", s.fsm == FsmState::Fault ? errorInfo(s.fsmError).code : "!"); text = status; }
-  else if (s.manualBypass)         { icon = Icon::Manual; text = "Kezi uzem (S1)"; }
+  else if (s.manualBypass)         { icon = Icon::Manual; text = "Kézi üzem (S1)"; }
   else if (off)                    { icon = Icon::Power; text = "Kikapcsolva"; }
-  else if (s.heat == HeatPhase::Heating && s.active < 0 && capHold) { icon = Icon::Smile; text = "Forras hofokhatar"; }
-  else if (s.heat == HeatPhase::Heating && s.active < 0) { icon = Icon::Hourglass; text = "Nincs halozat"; }
-  else if (s.heat == HeatPhase::Heating) { icon = Icon::Flame; text = s.guaranteeActive ? "Garancia: futes" : "Felfutes folyamatban"; }
-  else if (s.heat == HeatPhase::Waiting) { icon = Icon::Led; text = "Varakozas"; }
-  else if (s.heat == HeatPhase::Reached) { icon = Icon::Smile; text = "Hofok rendben"; }
+  else if (s.heat == HeatPhase::Heating && s.active < 0 && capHold) { icon = Icon::Smile; text = "Forrás hőfokhatár"; }
+  else if (s.heat == HeatPhase::Heating && s.active < 0) { icon = Icon::Hourglass; text = "Nincs hálózat"; }
+  else if (s.heat == HeatPhase::Heating) { icon = Icon::Flame; text = s.guaranteeActive ? "Garancia: fűtés" : "Felfutés folyamatban"; }
+  else if (s.heat == HeatPhase::Waiting) { icon = Icon::Led; text = "Várakozás"; }
+  else if (s.heat == HeatPhase::Reached) { icon = Icon::Smile; text = "Hőfok rendben"; }
 
   if (sensorFault) {
     sensorFaultView();
@@ -457,7 +544,7 @@ void Display::pageHome(const Snapshot& s, const Config& c) {
       for (float rr = r - 7.0f; rr <= r + 6.0f; rr += 0.75f) cv_->fillCircleF(cx + rr * sinf(rad), cy - rr * cosf(rad), 0.9f, kWhite);
     }
 
-    // nagy szám
+    // nagy szám (a vásznon marad, élsimítva)
     if (off) { drawIcon(Icon::Power, cx, 47); }
     else {
       if (s.tempValid) snprintf(buf, sizeof(buf), "%d", (int)lroundf(dispTemp_)); else strlcpy(buf, "--", sizeof(buf));
@@ -465,15 +552,15 @@ void Display::pageHome(const Snapshot& s, const Config& c) {
       cv_->setTextSize(3); cv_->setTextColor(kWhite);
       int16_t x1, y1; uint16_t w, h; cv_->getTextBounds(tbuf, 0, 0, &x1, &y1, &w, &h);
       cv_->setCursor(cx - (int)w / 2 - 4, 22); cv_->print(tbuf);
-      cv_->setTextSize(1); cv_->setTextColor(kGray); cv_->setCursor(cx + (int)w / 2 + 2, 24); cv_->print("C");
+      queueText(cx + (int)w / 2 + 2, 24, "°C", kGray);                  // mértékegység: éles kis szöveg
     }
     if (!off) drawIcon(icon, cx, 67);
 
     // állapotsor és célhőmérséklet
     centered(text, 93, 1, kGray);
   }
-  if (!off) { snprintf(buf, sizeof(buf), "cel %.0fC%s", (double)target, pendTarget_ >= 0 ? "*" : ""); cv_->setTextSize(1); cv_->setTextColor(pendTarget_ >= 0 ? kWarn : kGray); cv_->setCursor(2, 2); cv_->print(buf); }
-  if (time_.isValid()) { const uint16_t m = time_.minuteOfDay(); snprintf(buf, sizeof(buf), "%02u:%02u", m / 60, m % 60); cv_->setTextColor(kGray); cv_->setCursor(W - 32, 2); cv_->print(buf); }
+  if (!off) { snprintf(buf, sizeof(buf), "cél %.0f°C%s", (double)target, pendTarget_ >= 0 ? "*" : ""); queueText(2, 2, buf, pendTarget_ >= 0 ? kWarn : kGray); }
+  if (time_.isValid()) { const uint16_t m = time_.minuteOfDay(); snprintf(buf, sizeof(buf), "%02u:%02u", m / 60, m % 60); queueText(W - 2 - textWidth(buf), 2, buf, kGray); }
 
   // három hálózat: kitöltött = bojleren, keret = jelen van, piros keret = tiltva, szürke = nincs feszültség
   for (uint8_t i = 0; i < kSources; ++i) {
@@ -482,49 +569,48 @@ void Display::pageHome(const Snapshot& s, const Config& c) {
     if (on) cv_->fillRoundRect(x, y, 38, 12, 3, kSrc[i]);
     else cv_->drawRoundRect(x, y, 38, 12, 3, !s.present[i] ? kDark : (s.blocked[i] || s.capped[i]) ? kBad : kSrc[i]);
     char n1[2] = {(char)('1' + i), 0};
-    cv_->setTextSize(1); cv_->setTextColor(on ? kBlack : (s.present[i] ? kSrc[i] : kDark));
-    cv_->setCursor(x + 16, y + 2); cv_->print(n1);
+    queueText(x + (38 - textWidth(n1)) / 2, y + 2, n1, on ? kBlack : (s.present[i] ? kSrc[i] : kDark));
   }
 }
 
 void Display::pageLog() {
-  cv_->setTextSize(1); cv_->setTextColor(kGray); cv_->setCursor(2, 2); cv_->print("NAPLO");
+  queueText(2, 2, "NAPLÓ", kGray);
   Lock l(evMtx_);
-  if (!evN_) { cv_->setTextColor(kGray); cv_->setCursor(2, 20); cv_->print("Meg nincs esemeny"); return; }
+  if (!evN_) { queueText(2, 20, "Még nincs esemény", kGray); return; }
   if (scroll_ > (int)evN_ - 8) scroll_ = evN_ > 8 ? evN_ - 8 : 0;
   for (int row = 0; row < 8 && row + scroll_ < (int)evN_; ++row) {
     const Entry& e = ev_[(evHead_ + kEv - 1 - (row + scroll_)) % kEv];     // újabb felül
     const int y = 14 + row * 12;
-    cv_->setTextColor(kGray);  cv_->setCursor(2, y);  cv_->print(e.hm);
-    cv_->setTextColor(e.color); cv_->setCursor(36, y); cv_->print(e.text);
+    queueText(2, y, e.hm, kGray);
+    queueText(36, y, e.text, e.color);
   }
 }
 
 void Display::pageErrors(const Snapshot& s) {
-  cv_->setTextSize(1); cv_->setTextColor(kGray); cv_->setCursor(2, 2); cv_->print("HIBAK");
+  queueText(2, 2, "HIBÁK", kGray);
   int y = 16; bool any = false;
   for (uint8_t i = 1; i < static_cast<uint8_t>(ErrorCode::Count) && y < 104; ++i) {
     if (!((s.errorMask >> i) & 1u)) continue;
     any = true;
     const ErrorInfo& ei = errorInfo(static_cast<ErrorCode>(i));
-    char t[24]; snprintf(t, sizeof(t), "%s %s", ei.code, shortErr(static_cast<ErrorCode>(i)));
-    cv_->setTextColor(ei.sev >= Severity::Error ? kBad : kWarn); cv_->setCursor(2, y); cv_->print(t);
+    char t[40]; snprintf(t, sizeof(t), "%s %s", ei.code, shortErr(static_cast<ErrorCode>(i)));
+    queueText(2, y, t, ei.sev >= Severity::Error ? kBad : kWarn);
     y += 11;
   }
-  if (!any) { drawIcon(Icon::Smile, 64, 50); centered("Nincs aktiv hiba", 66, 1, kOk); }
-  else if (s.latched) { cv_->setTextColor(kGray); cv_->setCursor(2, 106); cv_->print("Nyugtaz: tartsd 1,5 s"); }
+  if (!any) { drawIcon(Icon::Smile, 64, 50); centered("Nincs aktív hiba", 66, 1, kOk); }
+  else if (s.latched) { queueText(2, 106, "Nyugtáz: tartsd 1,5 s", kGray); }
 }
 
 void Display::pageSettings(const Snapshot& s, const Config& c) {
   const float hyst = pendHyst_ >= 0 ? pendHyst_ : c.hystC;
   char buf[32];
-  cv_->setTextSize(1); cv_->setTextColor(kGray); cv_->setCursor(2, 2); cv_->print("BEALLITASOK");
-  cv_->setCursor(2, 18); cv_->print("Hiszterezis");
+  queueText(2, 2, "BEÁLLÍTÁSOK", kGray);
+  queueText(2, 18, "Hiszterézis", kGray);
   snprintf(buf, sizeof(buf), "%.1f", (double)hyst);
-  cv_->setTextSize(3); cv_->setTextColor(pendHyst_ >= 0 ? kWarn : kWhite); cv_->setCursor(2, 30); cv_->print(buf);
-  cv_->setTextSize(1); cv_->setTextColor(kGray); cv_->setCursor(70, 38); cv_->print("C  (+/-)");
-  snprintf(buf, sizeof(buf), "Cel: %.0fC", (double)c.targetC); cv_->setCursor(2, 62); cv_->print(buf);
-  if (c.guar.enabled) { snprintf(buf, sizeof(buf), "Garancia %.0fC %02u:%02u", (double)c.guar.minTempC, c.guar.readyAtMin / 60, c.guar.readyAtMin % 60); cv_->setCursor(2, 74); cv_->print(buf); }
-  snprintf(buf, sizeof(buf), "FW %s", s.fw); cv_->setCursor(2, 86); cv_->print(buf);
-  snprintf(buf, sizeof(buf), "WiFi %s %ddBm", s.wifiConnected ? "ok" : (s.apMode ? "AP" : "nincs"), s.rssi); cv_->setCursor(2, 98); cv_->print(buf);
+  cv_->setTextSize(3); cv_->setTextColor(pendHyst_ >= 0 ? kWarn : kWhite); cv_->setCursor(2, 30); cv_->print(buf);   // nagy érték: a vásznon marad
+  queueText(68, 38, "°C  (+/-)", kGray);
+  snprintf(buf, sizeof(buf), "Cél: %.0f°C", (double)c.targetC); queueText(2, 62, buf, kGray);
+  if (c.guar.enabled) { snprintf(buf, sizeof(buf), "Garancia %.0f°C %02u:%02u", (double)c.guar.minTempC, c.guar.readyAtMin / 60, c.guar.readyAtMin % 60); queueText(2, 74, buf, kGray); }
+  snprintf(buf, sizeof(buf), "FW %s", s.fw); queueText(2, 86, buf, kGray);
+  snprintf(buf, sizeof(buf), "WiFi %s %ddBm", s.wifiConnected ? "ok" : (s.apMode ? "AP" : "nincs"), s.rssi); queueText(2, 98, buf, kGray);
 }
