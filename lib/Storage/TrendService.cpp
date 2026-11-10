@@ -3,7 +3,8 @@
 void TrendService::begin() {
   prefs_.begin("trend", false);
   TrendState st;
-  if (prefs_.getBytesLength("st") == sizeof(TrendState) && prefs_.getBytes("st", &st, sizeof(st)) == sizeof(st)) {
+  // isKey: friss flash-en a kulcs hianyzik, ez nem hiba (a getBytesLength "nvs_get_blob len fail" hibat naplozna)
+  if (prefs_.isKey("st") && prefs_.getBytesLength("st") == sizeof(TrendState) && prefs_.getBytes("st", &st, sizeof(st)) == sizeof(st)) {
     Lock l(mtx_);
     mon_.importState(st);
   }

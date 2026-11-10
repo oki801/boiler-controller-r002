@@ -22,6 +22,23 @@ Supervisor::Supervisor()
       display_(shared_, *this, cfg_, time_) {}
 
 // ---------------------------------------------------------------- indítás
+// Az újraindulás okának olvasható neve a soros naplóhoz
+static const char* resetName(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_UNKNOWN:   return "ismeretlen (pl. USB-reset feltoltes utan)";
+    case ESP_RST_POWERON:   return "bekapcsolas";
+    case ESP_RST_EXT:       return "kulso reset";
+    case ESP_RST_SW:        return "szoftveres";
+    case ESP_RST_PANIC:     return "panic";
+    case ESP_RST_INT_WDT:   return "int-wdt";
+    case ESP_RST_TASK_WDT:  return "task-wdt";
+    case ESP_RST_WDT:       return "wdt";
+    case ESP_RST_DEEPSLEEP: return "deep sleep";
+    case ESP_RST_BROWNOUT:  return "brownout";
+    default:                return "egyeb";
+  }
+}
+
 void Supervisor::begin() {
   bank_.begin();                                   // 1. minden kimenet biztonságos (nyitott) állapotba
   pinMode(pins::WDT_KICK, OUTPUT);
@@ -44,6 +61,7 @@ void Supervisor::begin() {
   rstPrefs_.begin("boiler", false);
   uint8_t rc = rstPrefs_.getUChar("rstc", 0);
   const esp_reset_reason_t rr = esp_reset_reason();
+  Serial.printf("Reset ok: %s (%d)\n", resetName(rr), (int)rr);          // minden indulásnál; a hibás okoknál lent a számláló is nő
   if (rr == ESP_RST_PANIC || rr == ESP_RST_INT_WDT || rr == ESP_RST_TASK_WDT || rr == ESP_RST_WDT ||
       rr == ESP_RST_BROWNOUT) {
     rstPrefs_.putUChar("rstc", ++rc);
@@ -335,7 +353,7 @@ void Supervisor::buildSnapshot(const Config& c, const SelectorInput& in, uint32_
   s.v = sd.pw.v; s.i = sd.pw.i; s.p = sd.pw.p; s.f = sd.pw.f; s.pf = sd.pw.pf;
   s.eTotal = energy_.totalKwh();
   s.heap = ESP.getFreeHeap();
-  s.rssi = rssi_; s.wifiConnected = wifiUp_; s.apMode = apMode_; s.mqttConnected = mqttUp_;
+  s.rssi = rssi_; s.ip = ip_; s.wifiConnected = wifiUp_; s.apMode = apMode_; s.mqttConnected = mqttUp_;
   s.defaultCreds = c.webPassHash[0] == 0;
   strlcpy(s.fw, FW_BUILD, sizeof(s.fw));
   snap_ = s;
@@ -378,7 +396,7 @@ void Supervisor::netLoop() {
     }
     wifi_.loop();
     const bool up = wifi_.connected();
-    wifiUp_ = up; apMode_ = wifi_.apMode(); rssi_ = wifi_.rssi();
+    wifiUp_ = up; apMode_ = wifi_.apMode(); rssi_ = wifi_.rssi(); ip_ = wifi_.ip32();
     if (up) { ota_.begin(c); ota_.loop(); }
     mqtt_.loop(shared_.snapshot());
     mqttUp_ = mqtt_.connected();

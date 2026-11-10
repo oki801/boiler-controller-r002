@@ -42,14 +42,16 @@ int main(int argc, char** argv) {
     for (uint8_t i = 0; i < kSources; ++i) { s.present[i] = true; s.enabled[i] = true; s.eligible[i] = true; }
     s.fsm = FsmState::Active; s.active = 0; s.heat = HeatPhase::Heating; s.targetC = 55; s.hystC = 2;
     s.tempValid = true; s.tempC = 47.3f; s.wifiConnected = true; s.rssi = -61; s.mode = Mode::Auto;
+    s.ip = 192u | (168u << 8) | (1u << 16) | (57u << 24);          // 192.168.1.57
   };
-  auto shot = [&](const char* name, uint8_t page, std::function<void(Snapshot&, Config&)> setup, uint32_t anim = 4200) {
+  auto shot = [&](const char* name, uint8_t page, std::function<void(Snapshot&, Config&)> setup, uint32_t anim = 4200, bool newIp = false) {
     Snapshot s; base(s); Config c; setup(s, c);
     fs.s = s; store.cfg = c;
     d.page_ = page; d.tempInit_ = false; d.dispTemp_ = 0; d.dispTarget_ = c.targetC; d.footX_ = 16.0f + page * 32.0f;
     d.animMs_ = 0; d.trans_ = false; d.toastUntilMs_ = 0;
     for (int i = 0; i < 80; ++i) d.step(33, s, c);              // az átfutó értékek beállnak
     d.animMs_ += anim;
+    d.lastIp_ = newIp ? 0 : s.ip;                                  // newIp: most csatlakozott, megjelenik a felugró IP-üzenet
     d.draw(s, c);
     dump(dir, name);
   };
@@ -71,6 +73,7 @@ int main(int argc, char** argv) {
   shot("08_log",           Display::PgLog,      [](Snapshot&, Config&) {});
   shot("09_errors",        Display::PgErrors,   [](Snapshot& s, Config&) { s.errorMask = (1u << (uint8_t)ErrorCode::E08) | (1u << (uint8_t)ErrorCode::E09) | (1u << (uint8_t)ErrorCode::E13); });
   shot("10_settings",      Display::PgSettings, [](Snapshot&, Config& c) { c.guar.enabled = true; c.guar.minTempC = 40; c.guar.readyAtMin = 6 * 60 + 30; });
+  shot("11_ip_toast",      Display::PgHome,     [](Snapshot&, Config&) {}, 4200, true);
   printf("kesz: %s\n", dir);
   return 0;
 }

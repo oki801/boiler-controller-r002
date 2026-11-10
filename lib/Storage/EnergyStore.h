@@ -9,7 +9,7 @@ class EnergyStore {
   void begin() { prefs_.begin("energy", false); }
   void load(EnergyAccumulator& e) {
     float v[kSources];
-    for (uint8_t i = 0; i < kSources; ++i) { char k[4] = {'e', (char)('0' + i), 0, 0}; v[i] = prefs_.getFloat(k, 0.0f); }
+    for (uint8_t i = 0; i < kSources; ++i) { char k[4] = {'e', (char)('0' + i), 0, 0}; v[i] = prefs_.isKey(k) ? prefs_.getFloat(k, 0.0f) : 0.0f; }
     e.load(v);
   }
   void save(const EnergyAccumulator& e) {

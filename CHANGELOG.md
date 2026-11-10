@@ -2,6 +2,9 @@
 
 Minden modositas eggyel noveli a REVISION szamot (a csomag neve: boiler-controller-rNNN).
 
+- **r009** (2026-11-10): kijelzo-task stack 6144 -> 8192 (mert szabad stack min 293 bajt volt); ismeretlen reset ok neve; PROJECT.md T21-T22
+- **r008** (2026-11-10): indulasi naplo rendbetetele: 64 kB coredump particio, hianyzo NVS-kulcsok isKey vedelme (trend, energia, konfig), minden indulas okanak naplozasa; PROJECT.md T18-T20, README
+- **r007** (2026-11-09): az eszkoz IP-cime a kijelzon: beallitasok oldal sora + 8 s-os felugro uzenet WiFi-csatlakozaskor (Snapshot.ip, WifiManager::ip32); PC-s elonezet U8g2-vel; PROJECT.md T16-T17, README
 - **r006** (2026-11-09): kijelzo kis szovegek elesitese: a kis betuk a resolve() utan a kesz 1x kepre rajzolodnak (nem a 2x vaszonra), U8g2 helvR08_te betu (ekezetes magyar feliratok, fokjel), UTF-8-biztos szovegvagas (utf8Trim); uj fuggoseg: olikraus/U8g2_for_Adafruit_GFX; a nagy piros ?, a nagy szamok, az ikonok es a gyuru valtozatlanok
 - **r005** (2026-11-09): kijelzo elesimitas: SsCanvas 2x vaszon + lekicsinyites, sima DejaVu betuk, tortszam-pozicioju iv/viz/lang, rajzolasi ido naplo; PC-s elonezet (tools/display_preview); docs kepek ujrarenderelve
 - **r004** (2026-11-09): D15: homero-hiba (E01) kepernyo a kijelzon (piros ?, forro viz figyelmeztetes); T10 OTA alapjelszo marad; ConfigStore.cppold es index.htmlold torolve; PROJECT.md T9-T11 lezarva

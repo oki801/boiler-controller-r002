@@ -103,6 +103,13 @@ void u8Init() {
   gU8Ready = true;
 }
 int textWidth(const char* s) { u8Init(); return gU8.getUTF8Width(s); }
+// "IP 192.168.1.57" (AP-módban "AP 192.168.4.1"; cím nélkül "IP nincs")
+void ipText(char* out, size_t n, uint32_t ip, bool apOnly) {
+  if (ip == 0) { snprintf(out, n, "IP nincs"); return; }
+  snprintf(out, n, "%s %u.%u.%u.%u", apOnly ? "AP" : "IP", (unsigned)(ip & 255), (unsigned)((ip >> 8) & 255),
+           (unsigned)((ip >> 16) & 255), (unsigned)((ip >> 24) & 255));
+}
+
 // UTF-8-biztos vágás: legfeljebb maxBytes bájt, és nem hagy félbevágott ékezetes karaktert a végén
 void utf8Trim(char* s, size_t maxBytes) {
   size_t n = strlen(s);
@@ -162,7 +169,7 @@ void Display::begin() {
   prevBuf_ = static_cast<uint16_t*>(malloc(W * H * 2));              // ha nincs memória: nincs csúsztatás, a többi működik
   const Config c = cfg_.get();
   if (c.targetC > 0) lastOnTarget_ = c.targetC;
-  xTaskCreatePinnedToCore(task, "display", 6144, this, 1, nullptr, 0);   // a vezérlő task-ok nem várnak rá
+  xTaskCreatePinnedToCore(task, "display", 8192, this, 1, nullptr, 0);   // 8 kB: a mért szabad stack 6 kB-nál csak 293 bajt volt; a vezérlő task-ok nem várnak rá
 }
 
 void Display::task(void* p) { static_cast<Display*>(p)->loop(); }
@@ -442,6 +449,11 @@ void Display::draw(const Snapshot& s, const Config& c) {
     default:         pageSettings(s, c); break;
   }
   footer(s);
+  if (s.ip != 0 && s.ip != lastIp_) {                                // új IP-cím (WiFi-csatlakozás): 8 s-re kiírjuk
+    ipText(toast_, sizeof(toast_), s.ip, s.apMode && !s.wifiConnected);
+    toastUntilMs_ = animMs_ + 8000;
+  }
+  lastIp_ = s.ip;
   const bool toastOn = (int32_t)(toastUntilMs_ - animMs_) > 0;
   if (toastOn) {
     cv_->fillRoundRect(14, 46, 100, 26, 6, kWhite);
@@ -609,8 +621,9 @@ void Display::pageSettings(const Snapshot& s, const Config& c) {
   snprintf(buf, sizeof(buf), "%.1f", (double)hyst);
   cv_->setTextSize(3); cv_->setTextColor(pendHyst_ >= 0 ? kWarn : kWhite); cv_->setCursor(2, 30); cv_->print(buf);   // nagy érték: a vásznon marad
   queueText(68, 38, "°C  (+/-)", kGray);
-  snprintf(buf, sizeof(buf), "Cél: %.0f°C", (double)c.targetC); queueText(2, 62, buf, kGray);
-  if (c.guar.enabled) { snprintf(buf, sizeof(buf), "Garancia %.0f°C %02u:%02u", (double)c.guar.minTempC, c.guar.readyAtMin / 60, c.guar.readyAtMin % 60); queueText(2, 74, buf, kGray); }
-  snprintf(buf, sizeof(buf), "FW %s", s.fw); queueText(2, 86, buf, kGray);
-  snprintf(buf, sizeof(buf), "WiFi %s %ddBm", s.wifiConnected ? "ok" : (s.apMode ? "AP" : "nincs"), s.rssi); queueText(2, 98, buf, kGray);
+  snprintf(buf, sizeof(buf), "Cél: %.0f°C", (double)c.targetC); queueText(2, 57, buf, kGray);
+  if (c.guar.enabled) { snprintf(buf, sizeof(buf), "Garancia %.0f°C %02u:%02u", (double)c.guar.minTempC, c.guar.readyAtMin / 60, c.guar.readyAtMin % 60); queueText(2, 68, buf, kGray); }
+  snprintf(buf, sizeof(buf), "FW %s", s.fw); queueText(2, 79, buf, kGray);
+  snprintf(buf, sizeof(buf), "WiFi %s %ddBm", s.wifiConnected ? "ok" : (s.apMode ? "AP" : "nincs"), s.rssi); queueText(2, 90, buf, kGray);
+  ipText(buf, sizeof(buf), s.ip, s.apMode && !s.wifiConnected); queueText(2, 101, buf, kWhite);   // az IP fontos: fehér
 }

@@ -67,7 +67,7 @@ bool ConfigStore::applyJson(Config& c, JsonVariantConst j) {
 
 bool ConfigStore::begin() {
   prefs_.begin("boiler", false);
-  String s = prefs_.getString("cfg", "");
+  String s = prefs_.isKey("cfg") ? prefs_.getString("cfg", "") : String();   // friss flash: nincs mentett konfig, az alapértékek maradnak
   Config c;
   bool ok = true;
   if (s.length()) {

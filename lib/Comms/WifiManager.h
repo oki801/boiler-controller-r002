@@ -14,6 +14,7 @@ class WifiManager {
   bool connected() const { return WiFi.status() == WL_CONNECTED; }
   bool apMode() const { return ap_; }
   int8_t rssi() const { return connected() ? (int8_t)WiFi.RSSI() : 0; }
+  uint32_t ip32() const { return connected() ? (uint32_t)WiFi.localIP() : (ap_ ? (uint32_t)WiFi.softAPIP() : 0u); }   // 0: nincs cím
   String ip() const { return connected() ? WiFi.localIP().toString() : (ap_ ? WiFi.softAPIP().toString() : String("")); }
  private:
   void startAp();

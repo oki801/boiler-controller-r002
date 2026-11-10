@@ -46,6 +46,7 @@ struct Snapshot {
 
   uint32_t  heap = 0;
   int8_t    rssi = 0;
+  uint32_t  ip = 0;              // az eszköz IPv4-címe (STA, ennek hiányában AP); 0: nincs. Bájtsorrend: az első oktett a legalsó bájt
   bool      wifiConnected = false;
   bool      apMode = false;
   bool      mqttConnected = false;

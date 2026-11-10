@@ -218,13 +218,17 @@ A 230 V-os rész kivitelezését jogosult villanyszerelőnek kell végeznie. A r
 | r003 | Kódátnézés javításai (T1-T8): konfig-mentés holtpont és visszaállás, elavult szenzoradat észlelése, E10 számláló nyugtázáskor, célhőmérséklet-korlát és állapotszöveg a kijelzőn, eldobott parancsok jelzése, stack-mérés. Részletek: `CHANGELOG.md`. |
 | r004 | D15 döntés: hőmérő-hiba (E01) képernyő a kijelzőn; az OTA alapjelszó marad (T10); a `ConfigStore.cppold` és `index.htmlold` törölve (T11). |
 | r005 | A kijelző élsimítása (T14): `SsCanvas` 2x felbontású vászon lekicsinyítéssel, sima DejaVu betűk, törtszám-pozíciójú ív, víz és láng; PC-s előnézet: `tools/display_preview`. |
+| r006 | Kijelző kis szövegei élesek (a kész 1x képre rajzolva), U8g2 `helvR08_te` betű: ékezetes magyar feliratok és fokjel, UTF-8-biztos szövegvágás; új függőség: `olikraus/U8g2_for_Adafruit_GFX`. |
+| r007 | Az eszköz IP-címe a kijelzőn: a beállítások oldal új sora és 8 s-os felugró üzenet WiFi-csatlakozáskor; a `Snapshot.ip` és a `WifiManager::ip32()` az átadáshoz. |
+| r008 | Indítási napló rendbetétele: 64 kB `coredump` partíció (a `spiffs` 64 kB-tal kisebb és eltolódik), hiányzó NVS-kulcsok `isKey` védelme (nincs hamis `nvs_get_blob len fail` hibasor friss flash-en), minden indulás okának naplózása. |
+| r009 | A kijelző-task stackje 6144-ről 8192 bajtra nőtt (a mért szabad érték 293 bajt volt); az ismeretlen reset-ok neve olvasható. |
 
 ---
 
 ## 8. Teendők (kódátnézés, 2026-11-08, r002 alapján)
 
 A lista egy **statikus kódátnézésből** készült: a kód nem lett lefordítva és nem futott. A hibák gyanúk, amíg hardveren nincsenek igazolva.
-Minden lényeges módosítás új revíziót kap (a következő: **r006**).
+Minden lényeges módosítás új revíziót kap (a következő: **r010**).
 
 ### 8.1 Javítandó hibák
 
@@ -260,3 +264,10 @@ Minden lényeges módosítás új revíziót kap (a következő: **r006**).
 |---|---|---|
 | T14 | A kijelző "kockás" volt: a beépített 5x7-es betű 3-5-szörös nagyításban, a gyűrű és a víz egész képpontos köröket rajzolt. **Megoldás:** a `lib/Display/SsCanvas.h` 2x felbontású vászonra rajzol (128 kB a PSRAM-ban), és átlagolva kicsinyít 128x128-ra. A szöveg sima, arányos DejaVu betűkészletekkel jelenik meg (`lib/Display/fonts/`), az ív, a víz, a láng és a buborékok törtszám-pozícióval rajzolódnak. A `kGray` világosabb lett (a vékony betűk kontrasztja miatt). | KÉSZ r005, hardveren nem próbálva |
 | T15 | Hardveren ellenőrizni az r005-öt: a kép élsimítása és olvashatósága a valódi 1,44"-os kijelzőn; a soros konzolon percenként megjelenő `[display] rajzolas max N ms` érték (a főoldal 66 ms-os, 15 fps-es ütemét tartja-e: N kisebb legyen 66-nál); a PSRAM-foglalás sikerült-e (különben `[display] nincs eleg memoria a vaszonhoz`, a kijelző nem indul). Ha lassú, az r004 kijelzőkódja a tartalék. | nyitott |
+| T16 | Az eszköz IP-címe nem volt látható (WiFi-re csatlakozás után az AP-cím `192.168.4.1` megszűnik, az új cím pedig csak a routerből derült ki). **Megoldás:** a beállítások oldalon új fehér `IP a.b.c.d` sor (AP-módban `AP a.b.c.d`, cím nélkül `IP nincs`), és új IP-cím észlelésekor 8 s-ra felugró üzenet. | KÉSZ r007, hardveren nem próbálva |
+| T17 | A `platformio.ini` `upload_port = bojler.local`, a firmware OTA-neve viszont a `deviceId` (alapból `boiler01`). Ha nem `bojler` a `deviceId`, az OTA-feltöltés a megadott névvel nem talál rá az eszközre: egységesíteni (a `deviceId`-t `bojler`-re állítani, vagy az `upload_port`-ot cserélni). | nyitott |
+| T18 | A "No core dump partition found!" üzenet: nem volt `coredump` partíció, így összeomlás után sem maradt nyom. **Megoldás:** `coredump` partíció (64 kB, `0x610000`), a LittleFS `0x620000`-ra tolódott (`0x9E0000` méret). A partíciós tábla OTA-val nem cserélhető, USB-s feltöltés kell; a LittleFS (napló, előzmények) újraformázódik (`formatOnFail`), az NVS (beállítások, energia, trend) érintetlen marad. | KÉSZ r008, hardveren nem próbálva |
+| T19 | A `nvs_get_blob len fail: st NOT_FOUND` üzenet: friss flash-en a kulcs még nincs mentve. A kód eddig is jól kezelte (hossz-ellenőrzés, alapérték), a hibasor csak a `Preferences` naplózása. **Megoldás:** `isKey()` védelem a trend (`st`), az energia (`e0`-`e2`) és a konfig (`cfg`) olvasása előtt. A `getFloat(kulcs, alapérték)` NEM megoldás: a `Preferences` belül `getBytes`-t hív, ugyanezt a hibasort írja. | KÉSZ r008, hardveren nem próbálva |
+| T20 | Minden indulás okát (bekapcsolás, task-wdt, brownout stb.) a soros napló kiírja (`Reset ok: ...`), nem csak a hibás újraindulásokét. | KÉSZ r008 |
+| T21 | A soros naplóban `[stack] display szabad min: 293` jelent meg a 6144 bajtos stack mellett: túl kevés tartalék. **Megoldás:** a stack 8192 bajt. A sor a következő indulásnál újra mérhető, a szabad értéknek legalább 1000 bajt fölött kell maradnia. | KÉSZ r009, hardveren nem mérve |
+| T22 | Az `E (234) esp_core_dump_flash: Incorrect size of core dump image: 1` sor az új `coredump` partíció első indításakor jelenik meg, mert ott korábban LittleFS-adat volt. Ártalmatlan. Megszűnik, ha a partíciót egyszer törlöd: `esptool.py --chip esp32s3 --port <PORT> erase_region 0x610000 0x10000`. | nyitott (egyszeri, kézi) |

@@ -121,4 +121,5 @@ class Supervisor : public ICommandSink {
   bool fsOk_ = true;
   volatile bool wifiUp_ = false, apMode_ = false, mqttUp_ = false;
   volatile int8_t rssi_ = 0;
+  volatile uint32_t ip_ = 0;
 };

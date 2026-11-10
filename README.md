@@ -40,6 +40,8 @@ OTA_PASSWORD=boiler-ota pio run -e ota -t upload
 (jelszó: `bojler-setup`). A webes felület a `http://192.168.4.1` címen érhető el.
 Belépés: `admin` / `boiler`. **Az első dolgod a jelszó cseréje legyen** (Beállítások fül).
 WiFi-n `http://<deviceId>.local` (alapból `boiler01.local`).
+Az eszköz aktuális IP-címe a kijelzőn a beállítások oldalon (`IP a.b.c.d`) látszik, és WiFi-re csatlakozáskor 8 másodpercre
+felugró üzenetben is megjelenik; ha a `.local` név nem oldódik fel (pl. Windows alatt), használd az IP-címet: `http://<IP>`.
 
 ## Felépítés
 
@@ -116,7 +118,8 @@ A LittleFS a gyakorlatban nyűgös (formázás, partíciócímke, kép/partíci�
 
 - **Lábak:** a 26-37 (flash és octal PSRAM), a 19/20 (USB), a 43/44 (UART0) és a strapping lábak (0, 3, 45, 46) kimaradnak.
   A teljes kiosztás az `include/pins.h` fájlban van. Nincsenek bemenet-csak lábak, minden bemeneten van belső felhúzás.
-- **Partíciók:** 2 × 3 MB firmware (OTA) és kb. 10 MB LittleFS a naplónak és a webes felületnek (`partitions_16MB.csv`).
+- **Partíciók:** 2 × 3 MB firmware (OTA), 64 kB `coredump` (összeomlás-napló) és kb. 10 MB LittleFS a naplónak (`partitions_16MB.csv`). A partíciós tábla változtatása csak USB-s feltöltéssel jut fel (OTA nem cseréli); ilyenkor a LittleFS újraformázódik, az NVS megmarad.
+- **Összeomlás utáni nyom:** a vezérlő újraindulása után a dump kiolvasható: `esptool.py --chip esp32s3 --port <PORT> read_flash 0x610000 0x10000 coredump.bin`, majd `esp-coredump info_corefile -t raw -c coredump.bin .pio/build/esp32s3/firmware.elf` (`pip install esp-coredump`; az `.elf` pontosan az a build legyen, ami az eszközön fut). Az indulás okát a soros napló `Reset ok:` sora mutatja.
 - **USB:** a soros konzol és a JTAG a beépített USB-n megy (`ARDUINO_USB_CDC_ON_BOOT=1`), külön USB-UART nem kell.
 - **PSRAM:** a 24 órás előzmény (10 s-os minták, ~69 kB) a PSRAM-ban van, a webes felület "Elmúlt 24 óra" grafikonját táplálja (`/api/history`).
   Csak RAM-ban él, újraindításkor üres. A tartós napló a LittleFS-en lévő CSV. PSRAM nélkül 8 órát tárol.

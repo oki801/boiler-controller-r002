@@ -73,6 +73,7 @@ class Display {
   uint16_t* prevBuf_ = nullptr;                                    // az előző oldal képe a csúsztatáshoz (32 kB)
   int      scroll_ = 0;
   uint32_t lastInputMs_ = 0, toastUntilMs_ = 0, saveAtMs_ = 0;
+  uint32_t lastIp_ = 0;                                            // az utoljára látott IP-cím: változáskor felugró üzenet
   char     toast_[20] = "";
   float    pendTarget_ = -1, pendHyst_ = -1, lastOnTarget_ = 55;   // -1 = nincs függő módosítás
 
