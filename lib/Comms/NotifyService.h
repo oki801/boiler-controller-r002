@@ -24,6 +24,7 @@ class NotifyService {
   static void eventThunk(const Event& e, void* ctx);    // EventBus-feliratkozó (szálbiztos, nem blokkol)
   void sendTest();                                       // teszt üzenet (a háttér-task küldi)
   String status() const;                                 // utolsó küldés eredménye
+  void setMuted(bool m) { muted_ = m; }                  // szervizmódban a szimulált hibák nem mehetnek ki értesítésként
  private:
   struct Msg { char title[72]; char text[220]; uint8_t sev; };
   static void task(void* p);
@@ -37,6 +38,7 @@ class NotifyService {
   ConfigStore& cfg_;
   const TimeService& time_;
   QueueHandle_t q_ = nullptr;
+  volatile bool muted_ = false;
   NotifyPolicy policy_;
   mutable Mutex mtx_;
   char status_[96] = "nincs kuldve";

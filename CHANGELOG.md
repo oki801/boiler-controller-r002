@@ -2,6 +2,7 @@
 
 Minden modositas eggyel noveli a REVISION szamot (a csomag neve: boiler-controller-rNNN).
 
+- **r010D** (2026-11-10): szervizmod (szarazfutas): szimulalt kontaktorok es szimulalt bemenetek (S1, halozat-jelenlet, homerseklet), hibainjektalas (E04/E05), /service oldal es figyelmezteto sav; belepes/kilepes ujrainditassal, idokorlat 1-30 perc, ujrainditas/aramszunet utan nem marad bent; szervizmodban nincs energia-, elozmeny- es trendmentes, nincs kulso ertesites; a "Kezi uzem" uzenet a GPIO21 lab allasat is jelzi; scripts/version.py es release.py a szam utani betut (D) is kezeli
 - **r009** (2026-11-10): kijelzo-task stack 6144 -> 8192 (mert szabad stack min 293 bajt volt); ismeretlen reset ok neve; PROJECT.md T21-T22
 - **r008** (2026-11-10): indulasi naplo rendbetetele: 64 kB coredump particio, hianyzo NVS-kulcsok isKey vedelme (trend, energia, konfig), minden indulas okanak naplozasa; PROJECT.md T18-T20, README
 - **r007** (2026-11-09): az eszkoz IP-cime a kijelzon: beallitasok oldal sora + 8 s-os felugro uzenet WiFi-csatlakozaskor (Snapshot.ip, WifiManager::ip32); PC-s elonezet U8g2-vel; PROJECT.md T16-T17, README

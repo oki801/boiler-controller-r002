@@ -9,6 +9,7 @@ de onalloan is hasznalhato:  python3 scripts/embed_ui.py
   data/www/dashboard.html  -> include/ui_dash.gz.h  (UI_DASH_GZ)   a felhasznaloi dashboard, "/dash" (valtozatlanul beagyazva)
   data/www/dashboard_v2.html -> include/ui_dash2.gz.h (UI_DASH2_GZ) az adatkotott alverzio, "/dash2"
   data/www/dashboard_v3.html -> include/ui_dash3.gz.h (UI_DASH3_GZ) a folyekony (animalt) valtozat, "/dash3"
+  data/www/service.html    -> include/ui_service.gz.h (UI_SERVICE_GZ) a szervizoldal (szarazfutas), "/service"
 """
 import gzip
 import os
@@ -18,6 +19,7 @@ TARGETS = [
     ("dashboard.html", "ui_dash.gz.h", "UI_DASH_GZ"),
     ("dashboard_v2.html", "ui_dash2.gz.h", "UI_DASH2_GZ"),
     ("dashboard_v3.html", "ui_dash3.gz.h", "UI_DASH3_GZ"),
+    ("service.html", "ui_service.gz.h", "UI_SERVICE_GZ"),
 ]
 
 

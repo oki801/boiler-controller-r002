@@ -12,6 +12,7 @@ Hasznalat:
 import argparse
 import datetime
 import os
+import re
 import sys
 import zipfile
 
@@ -21,8 +22,10 @@ EXCLUDE_EXT = (".zip", ".pyc")
 
 
 def read_rev():
+    """A REVISION szama; a szam utani betu (pl. "10D") nem szamit, a kovetkezo szamozott kiadas nem viseli."""
     try:
-        return int(open(os.path.join(ROOT, "REVISION"), encoding="utf-8").read().strip() or 0)
+        m = re.match(r"^(\d+)", open(os.path.join(ROOT, "REVISION"), encoding="utf-8").read().strip())
+        return int(m.group(1)) if m else 0
     except Exception:
         return 0
 
@@ -50,7 +53,14 @@ def main():
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(new)
 
-    name = "boiler-controller-r%03d" % rev
+    suffix = ""
+    if a.no_bump:                                  # csak csomagolas: a REVISION fajl betujelet megtartjuk
+        try:
+            m = re.match(r"^\d+([A-Za-z]*)", open(os.path.join(ROOT, "REVISION"), encoding="utf-8").read().strip())
+            suffix = m.group(1) if m else ""
+        except Exception:
+            pass
+    name = "boiler-controller-r%03d%s" % (rev, suffix)
     out = os.path.join(a.out, name + ".zip")
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for root, dirs, files in os.walk(ROOT):

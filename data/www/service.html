@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bojler szervizmód</title>
+<style>
+  :root { --bg:#e6eaee; --panel:#f6f8fa; --ink:#14222b; --mute:#5c6b76; --line:#c4ccd3; --s2:#1f5f99;
+          --ok:#1e7a4c; --bad:#b3261e; --warn:#a15c00; --r:6px; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#10181e; --panel:#19242c; --ink:#e4ebf0; --mute:#8fa1ad; --line:#2f3f4a; --s2:#5fa3e0;
+            --ok:#4cc38a; --bad:#ff7a70; --warn:#e6a23c; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; font-variant-numeric:tabular-nums; }
+  main { max-width:720px; margin:0 auto; padding:12px 12px 60px; }
+  h1 { font-size:1.05rem; margin:0; font-weight:650; }
+  h2 { font-size:1rem; margin:0 0 8px; font-weight:650; }
+  header { display:flex; justify-content:space-between; align-items:baseline; gap:8px; padding:6px 2px 10px; }
+  a { color:var(--s2); }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:12px; margin-bottom:10px; }
+  .banner { padding:10px 12px; border-radius:var(--r); margin-bottom:10px; border:2px solid var(--warn); color:var(--warn); font-weight:600; }
+  .banner.off { border:1px solid var(--line); color:var(--mute); font-weight:400; }
+  .grid { display:grid; grid-template-columns:auto 1fr; gap:6px 12px; align-items:center; }
+  .grid > span { color:var(--mute); }
+  .seg { display:flex; border:1px solid var(--line); border-radius:var(--r); overflow:hidden; }
+  .seg button { flex:1; padding:10px 4px; background:var(--panel); border:0; border-right:1px solid var(--line); font:inherit; color:var(--ink); cursor:pointer; }
+  .seg button:last-child { border-right:0; }
+  .seg button[aria-pressed=true] { background:var(--ink); color:var(--bg); font-weight:600; }
+  .tag { font-size:.8rem; padding:2px 8px; border-radius:99px; border:1px solid var(--line); color:var(--mute); white-space:nowrap; }
+  .tag.ok { color:var(--ok); border-color:var(--ok); }
+  .tag.bad { color:var(--bad); border-color:var(--bad); }
+  label { font-size:.9rem; color:var(--mute); }
+  input[type=number] { width:90px; padding:8px 10px; font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:var(--r); }
+  .btn { padding:11px 16px; font:inherit; border-radius:var(--r); border:1px solid var(--ink); background:var(--ink); color:var(--bg); cursor:pointer; }
+  .btn.danger { background:var(--bad); border-color:var(--bad); color:#fff; }
+  .btn.alt { background:none; color:var(--ink); }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:center; }
+  .muted { color:var(--mute); font-size:.88rem; }
+  .fi { display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; }
+  .fi label { display:flex; gap:6px; align-items:center; color:var(--ink); }
+  button:focus-visible, input:focus-visible { outline:3px solid var(--s2); outline-offset:1px; }
+  #toast { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:10px 16px; border-radius:var(--r); opacity:0; pointer-events:none; transition:opacity .2s; }
+  #toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Szervizmód</h1><a href="/">← Főoldal</a></header>
+  <div id="banner" class="banner off">Betöltés…</div>
+
+  <div class="panel" id="enterPanel" hidden>
+    <h2>Belépés a szervizmódba (szárazfutás)</h2>
+    <p class="muted">A szervizmódban a vezérlés <b>szimulált kontaktorokkal</b> fut: a valódi kontaktorok nem mozdulnak, a bojler a vezérlőtől nem kap hálózatot. A bemenetek (S1, hálózatok, hőmérséklet) kézzel megadhatók, így a logika hardver nélkül is kipróbálható. Belépéskor és kilépéskor az eszköz újraindul, a szervizmód a megadott idő után magától kilép, és újraindítás vagy áramszünet után sosem marad bent.</p>
+    <div class="actions">
+      <label for="mins">Időkorlát (perc)</label><input type="number" id="mins" min="1" max="30" value="10">
+      <button class="btn" id="enterBtn">Belépés (újraindul)</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Valós bemenetek</h2>
+    <div class="grid" id="real"></div>
+    <p class="muted" style="margin:8px 0 0">Az S1 bemenet (GPIO21) aktív alacsony: AUTO állásban a lábat GND-re kell húzni. Bekötetlen lábnál a belső felhúzás miatt „nem AUTO” az érték.</p>
+  </div>
+
+  <div id="activePanels" hidden>
+    <div class="panel">
+      <h2>Szimulált bemenetek</h2>
+      <div class="grid">
+        <span>S1 kapcsoló</span>
+        <div class="seg" id="s1Seg"><button data-v="real">Valós</button><button data-v="auto">AUTO</button><button data-v="manual">Nem AUTO</button></div>
+        <span>Hálózat 1</span><div class="seg" data-p="0"><button data-v="real">Valós</button><button data-v="on">Van</button><button data-v="off">Nincs</button></div>
+        <span>Hálózat 2</span><div class="seg" data-p="1"><button data-v="real">Valós</button><button data-v="on">Van</button><button data-v="off">Nincs</button></div>
+        <span>Hálózat 3</span><div class="seg" data-p="2"><button data-v="real">Valós</button><button data-v="on">Van</button><button data-v="off">Nincs</button></div>
+        <span>Víz hőmérséklet</span>
+        <div><label><input type="checkbox" id="tOn"> szimulált</label> <input type="number" id="tVal" min="-10" max="110" step="0.5" value="50"> °C</div>
+      </div>
+      <p class="muted" style="margin:8px 0 0">Egy hálózat csak akkor válik használhatóvá, ha a beállított ideje (alapból 30 s) stabilan „Van”. Hőmérséklet a hőfokhatár fölé (alapból 75 °C) állítva a túlhőmérséklet-védelem is kipróbálható.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Hibainjektálás (szimulált kontaktorokon)</h2>
+      <div class="grid">
+        <span>Nem húz be (E04)</span><div class="fi"><label><input type="checkbox" data-fc="0"> 1</label><label><input type="checkbox" data-fc="1"> 2</label><label><input type="checkbox" data-fc="2"> 3</label></div>
+        <span>Nem enged el (E05)</span><div class="fi"><label><input type="checkbox" data-sk="0"> 1</label><label><input type="checkbox" data-sk="1"> 2</label><label><input type="checkbox" data-sk="2"> 3</label></div>
+      </div>
+      <p class="muted" style="margin:8px 0 0">A zárolt hibák (E03, E05) a főoldalon nyugtázhatók; kilépéskor az újraindítás úgyis törli őket.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Eredmény (a vezérlés döntése)</h2>
+      <div class="grid" id="result"></div>
+      <div class="actions"><button class="btn danger" id="exitBtn">Kilépés (újraindul)</button></div>
+    </div>
+  </div>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const FSM = { INIT:'Indul', SELFTEST:'Önteszt', IDLE:'Egyik hálózat sincs a bojlerre kapcsolva', DEAD_TIME:'Váltás: biztonsági várakozás',
+  CLOSING:'Kapcsolás…', ACTIVE:'Üzemel', OPENING:'Leválasztás…', MANUAL:'Kézi üzem (S1 nem AUTO)', FAULT:'Hiba' };
+function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2600); }
+async function j(url, opt) {
+  const r = await fetch(url, opt);
+  let body = null; try { body = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error((body && body.error) || ('Hiba: ' + r.status));
+  return body;
+}
+const post = (url, data) => j(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data || {}) });
+const tag = (ok, yes, no) => `<span class="tag ${ok ? 'ok' : ''}">${ok ? yes : no}</span>`;
+const mmss = s => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+
+let sim = { s1:'real', pres:['real','real','real'], temp:null, fail_close:[false,false,false], stuck:[false,false,false] };
+let simInit = false, wasActive = null;
+
+function paintSim() {
+  document.querySelectorAll('#s1Seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === sim.s1));
+  document.querySelectorAll('.seg[data-p]').forEach(sg => sg.querySelectorAll('button').forEach(b =>
+    b.setAttribute('aria-pressed', b.dataset.v === sim.pres[+sg.dataset.p])));
+  $('#tOn').checked = sim.temp !== null;
+  if (sim.temp !== null && document.activeElement !== $('#tVal')) $('#tVal').value = sim.temp;
+  document.querySelectorAll('[data-fc]').forEach(c => c.checked = !!sim.fail_close[+c.dataset.fc]);
+  document.querySelectorAll('[data-sk]').forEach(c => c.checked = !!sim.stuck[+c.dataset.sk]);
+}
+async function pushSim() {
+  try { await post('/api/service/sim', sim); } catch (x) { toast(x.message); }
+}
+
+function render(d) {
+  const sv = d.svc, st = d.state, names = d.names;
+  const act = !!(sv && sv.active);
+  if (wasActive !== null && wasActive !== act) simInit = false;
+  wasActive = act;
+  $('#enterPanel').hidden = act;
+  $('#activePanels').hidden = !act;
+  const bn = $('#banner');
+  if (act) {
+    bn.className = 'banner';
+    bn.textContent = 'SZERVIZMÓD AKTÍV: szimulált bemenetek és kontaktorok, a valódi kimenetek nem mozdulnak. Kilép: ' + mmss(sv.left_s) + ' múlva.';
+  } else {
+    bn.className = 'banner off';
+    bn.textContent = 'A szervizmód nem aktív, az eszköz normál (valódi) üzemben van.';
+  }
+  if (!sv) { $('#real').innerHTML = '<span>Ez a firmware nem támogatja a szervizmódot.</span>'; return; }
+  $('#real').innerHTML =
+    `<span>S1 kapcsoló (GPIO21)</span>${tag(sv.s1_auto_real, 'AUTO', 'nem AUTO (láb magas)')}` +
+    [0,1,2].map(i => `<span>${esc(names[i])}</span>${tag(sv.pres_real[i], 'van feszültség', 'nincs feszültség')}`).join('') +
+    `<span>Víz hőmérséklet</span><b>${sv.temp_real === null ? '–' : sv.temp_real.toFixed(1) + ' °C'}</b>`;
+  if (act) {
+    if (!simInit && sv.sim) { sim = sv.sim; simInit = true; paintSim(); }
+    $('#result').innerHTML =
+      `<span>Állapot</span><b>${esc(FSM[st.fsm] || st.fsm)}</b>` +
+      `<span>Aktív hálózat</span><b>${st.active ? esc(names[st.active - 1]) : 'egyik sem'}</b>` +
+      `<span>Szimulált kontaktorok</span><b>${st.fb.map((f, i) => (i + 1) + ':' + (f ? 'zárva' : 'nyitva')).join(' · ')}</b>` +
+      `<span>Hőfok / cél</span><b>${d.tele.temp === null ? '–' : d.tele.temp.toFixed(1)} °C / ${st.target} °C (${esc(st.heat)})</b>` +
+      `<span>Hibák</span><b>${(st.errors && st.errors.length) ? esc(st.errors.join(', ')) : (st.fault ? esc(st.fault) : 'nincs')}</b>`;
+  }
+}
+async function poll() { try { render(await j('/api/status')); } catch (e) { $('#banner').textContent = 'Nincs kapcsolat az eszközzel…'; } }
+setInterval(poll, 1000); poll();
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('.seg button'); if (!b) return;
+  const sg = b.parentElement;
+  if (sg.id === 's1Seg') sim.s1 = b.dataset.v; else sim.pres[+sg.dataset.p] = b.dataset.v;
+  paintSim(); pushSim();
+});
+$('#tOn').onchange = () => { sim.temp = $('#tOn').checked ? (parseFloat($('#tVal').value) || 50) : null; paintSim(); pushSim(); };
+$('#tVal').onchange = () => { if ($('#tOn').checked) { sim.temp = parseFloat($('#tVal').value); pushSim(); } };
+document.querySelectorAll('[data-fc]').forEach(c => c.onchange = () => { sim.fail_close[+c.dataset.fc] = c.checked; pushSim(); });
+document.querySelectorAll('[data-sk]').forEach(c => c.onchange = () => { sim.stuck[+c.dataset.sk] = c.checked; pushSim(); });
+
+$('#enterBtn').onclick = async () => {
+  const m = parseInt($('#mins').value, 10) || 10;
+  if (!confirm('Belépsz a szervizmódba? Az eszköz újraindul, és ' + m + ' percig szimulált kontaktorokkal fut (a bojler a vezérlőtől nem kap hálózatot).')) return;
+  try { await post('/api/service/enter', { minutes:m, confirm:true }); toast('Újraindul szervizmódba…'); setTimeout(poll, 6000); }
+  catch (x) { toast(x.message); }
+};
+$('#exitBtn').onclick = async () => {
+  try { await post('/api/service/exit'); toast('Kilépés, újraindul…'); setTimeout(poll, 6000); }
+  catch (x) { toast(x.message); }
+};
+</script>
+</body>
+</html>

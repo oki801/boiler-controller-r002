@@ -228,7 +228,7 @@ A 230 V-os rész kivitelezését jogosult villanyszerelőnek kell végeznie. A r
 ## 8. Teendők (kódátnézés, 2026-11-08, r002 alapján)
 
 A lista egy **statikus kódátnézésből** készült: a kód nem lett lefordítva és nem futott. A hibák gyanúk, amíg hardveren nincsenek igazolva.
-Minden lényeges módosítás új revíziót kap (a következő: **r010**).
+Minden lényeges módosítás új revíziót kap (a következő: **r011**).
 
 ### 8.1 Javítandó hibák
 
@@ -271,3 +271,5 @@ Minden lényeges módosítás új revíziót kap (a következő: **r010**).
 | T20 | Minden indulás okát (bekapcsolás, task-wdt, brownout stb.) a soros napló kiírja (`Reset ok: ...`), nem csak a hibás újraindulásokét. | KÉSZ r008 |
 | T21 | A soros naplóban `[stack] display szabad min: 293` jelent meg a 6144 bajtos stack mellett: túl kevés tartalék. **Megoldás:** a stack 8192 bajt. A sor a következő indulásnál újra mérhető, a szabad értéknek legalább 1000 bajt fölött kell maradnia. | KÉSZ r009, hardveren nem mérve |
 | T22 | Az `E (234) esp_core_dump_flash: Incorrect size of core dump image: 1` sor az új `coredump` partíció első indításakor jelenik meg, mert ott korábban LittleFS-adat volt. Ártalmatlan. Megszűnik, ha a partíciót egyszer törlöd: `esptool.py --chip esp32s3 --port <PORT> erase_region 0x610000 0x10000`. | nyitott (egyszeri, kézi) |
+| T23 | **Szervizmód (szárazfutás).** Cél: a logika hardver nélkül kipróbálható legyen (pl. az "S1 nem AUTO" kézi üzem, hálózatváltás, hőfokhatár, E04/E05 hibaágak). **Megoldás:** a belépés a `/service` oldalról (vagy `POST /api/service/enter`, `confirm: true`) **újraindítással** történik: a kérés egyszer használatos RTC-jelzőbe kerül, csak a rákövetkező szoftveres újraindítás veszi figyelembe, ezért áramszünet, watchdog vagy bármilyen más reset után normál módban indul. Szervizmódban a `ServiceBank` a **szimulált** `SimBank`-ra irányít: a valódi kontaktor-lábak és az ARM végig alacsonyak, a szimulált kontaktor ugyanazt az `InterlockGuard`-ot használja. Szimulálható: S1 (AUTO / nem AUTO), a 3 hálózat jelenléte, a vízhőmérséklet (a túlhőmérséklet-védelem is próbálható), hibainjektálás (nem húz be: E04, nem enged el: E05). Időkorlát 1-30 perc, utána automatikus kilépés (újraindítás); kilépés kézzel is. Szervizmódban nincs energiaszámolás, előzmény- és trendmentés, a mérési napló nem kap szimulált mérést, a külső értesítés némítva van; az LED_OK gyorsan villog; a főoldalon figyelmeztető sáv látszik. Nincs benne: a valódi kontaktorok kézi kapcsolása (külön, szándékosan kihagyott funkció). | KÉSZ r010D, hardveren nem próbálva, ESP32-re nem fordítva (a hardverfüggetlen rész PC-n tesztelve) |
+| T24 | A "Kézi üzem: az S1 kapcsoló nem AUTO állásban van" üzenet bekötetlen GPIO21-nél jelenik meg (belső felhúzás, aktív alacsony AUTO). A főoldal ilyenkor kiírja a láb állapotát; a szervizoldal mindig mutatja a valós S1/hálózat/hőmérséklet bemeneteket. | KÉSZ r010D |

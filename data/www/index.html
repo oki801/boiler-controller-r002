@@ -94,6 +94,7 @@
   </nav>
 
   <div id="bn-creds" class="banner warn">Az alapértelmezett jelszó van használatban. Cseréld le a Beállítások fülön.</div>
+  <div id="bn-svc" class="banner warn"></div>
   <div id="bn-fault" class="banner bad"></div>
   <div id="bn-guar" class="banner info">Garantált minimum aktív: a víz fürdéshez alkalmas hőmérsékletre melegszik estére.</div>
 
@@ -169,6 +170,9 @@
       <div class="actions"><button class="btn alt" id="trendReset">Alaphelyzet (vízkőmentesítés után)</button></div>
     </div>
     <div class="panel"><h2>Értesítés</h2><div id="notifyInfo"></div></div>
+    <div class="panel"><h2>Szervizmód</h2>
+      <p style="color:var(--mute);font-size:.88rem;margin:0 0 8px">Szárazfutás szimulált kontaktorokkal és szimulált bemenetekkel (S1, hálózatok, hőmérséklet). A valódi kimenetek közben nem mozdulnak.</p>
+      <div class="actions"><a class="btn alt" href="/service" style="text-decoration:none">Szervizoldal megnyitása</a></div></div>
     <div class="panel"><h2>Firmware frissítés</h2>
       <label for="fw">Firmware (.bin)</label><input type="file" id="fw" accept=".bin">
       <label for="fsimg">Fájlrendszer-kép (littlefs.bin)</label><input type="file" id="fsimg" accept=".bin">
@@ -235,6 +239,7 @@ function render(d) {
 
   let line = FSM[st.fsm] || st.fsm;
   if (st.fsm === 'ACTIVE') line = `Üzemel: ${names[st.active - 1]}`;
+  if (st.fsm === 'MANUAL' && d.svc && !d.svc.active && !d.svc.s1_auto_real) line += ' (a GPIO21 láb magas; AUTO-hoz GND-re kell kötni)';
   const HEAT = { heating:'felfűtés', waiting:'várakozás', reached:'cél elérve', off:'kikapcsolva', unknown:'nincs hőmérő adat' };
   if (st.fsm === 'ACTIVE' || st.fsm === 'IDLE') line += ` · cél ${st.target} °C (${HEAT[st.heat] || ''})`;
   $('#stateText').textContent = line;
@@ -277,6 +282,11 @@ function render(d) {
   } else bf.className = 'banner';
   $('#bn-creds').classList.toggle('show', !!d.sys.default_creds);
   $('#bn-guar').classList.toggle('show', !!st.guarantee);
+  const bs = $('#bn-svc'), sv = d.svc;
+  if (sv && sv.active) {
+    bs.innerHTML = 'SZERVIZMÓD AKTÍV: szimulált bemenetek és kontaktorok, a valódi kimenetek nem mozdulnak. Kilép: ' + Math.floor(sv.left_s / 60) + ':' + String(sv.left_s % 60).padStart(2, '0') + ' múlva. <a href="/service">Szervizoldal</a>';
+    bs.classList.add('show');
+  } else bs.classList.remove('show');
 
   $('#notifyInfo').textContent = d.sys.notify_on ? 'Bekapcsolva. Utolsó küldés: ' + d.sys.notify_status : 'Kikapcsolva (a Beállítások fülön kapcsolható be).';
   $('#sysInfo').innerHTML = `<div>Firmware: ${esc(d.sys.fw)}</div><div>Üzemidő: ${Math.floor(t.up / 3600)} ó ${Math.floor(t.up % 3600 / 60)} p</div>

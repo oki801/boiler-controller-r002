@@ -18,6 +18,8 @@
 
 #include <SystemClock.h>
 #include <GpioContactorBank.h>
+#include <ServiceBank.h>
+#include <ServiceSim.h>
 #include <TimeService.h>
 #include <Sync.h>
 #include <TempSensor.h>
@@ -35,6 +37,7 @@
 #include <NotifyService.h>
 #include <Display.h>
 #include "SharedState.h"
+#include "ServiceMode.h"
 
 // Összeköti a modulokat és elindítja a FreeRTOS feladatokat.
 class Supervisor : public ICommandSink {
@@ -47,6 +50,8 @@ class Supervisor : public ICommandSink {
   void setExtOk(uint8_t src, bool ok) override;
   void ackFault() override;
   void reboot() override;
+  bool serviceRequest(bool enter, uint16_t minutes) override;   // szervizmód (szárazfutás): a hívó utána újraindít
+  bool serviceSim(const ServiceSim& s) override;
 
  private:
   struct Cmd { uint8_t type; int8_t a; int8_t b; };
@@ -78,6 +83,8 @@ class Supervisor : public ICommandSink {
   ErrorTracker  errors_;
   ConfigStore   cfg_;
   GpioContactorBank bank_;
+  ServiceBank   sbank_;        // valódi / szimulált kontaktor-egység (a döntés induláskor dől el)
+  ServiceMode   svc_;
   NetworkDetector net_;
   SwitchoverFsm fsm_;
   SafetyMonitor safety_;
@@ -115,6 +122,13 @@ class Supervisor : public ICommandSink {
   uint32_t activeSinceMs_ = 0, lastEnergySaveMs_ = 0, lastSeq_ = 0;
   uint32_t cfgVer_ = 0;
   Snapshot snap_;
+  // Szervizmód: a ControlTask által birtokolt segédállapot
+  bool     s1RealAuto_ = false;
+  bool     presReal_[kSources] = {false, false, false};
+  bool     presPrev_[kSources] = {false, false, false};
+  uint32_t presSince_[kSources] = {0, 0, 0};
+  TempReading tempReal_;
+  ServiceSim  simNow_;
   uint32_t lastSnapMs_ = 0;
   Preferences rstPrefs_;
   bool rstCleared_ = false;

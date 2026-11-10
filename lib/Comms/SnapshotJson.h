@@ -70,4 +70,58 @@ inline void state(JsonVariant d, const Snapshot& s) {
     if ((s.errorMask >> i) & 1u) errs.add(errorInfo(static_cast<ErrorCode>(i)).code);
 }
 
+// Szervizmód: valós és szimulált bemenetek (a /api/status "svc" objektuma és a /service oldal).
+inline void service(JsonVariant d, const Snapshot& s) {
+  d["active"] = s.svc;
+  d["left_s"] = s.svcLeftS;
+  d["s1_auto_real"] = s.s1RealAuto;                     // a GPIO21 valós állapota (AUTO = alacsony láb)
+  JsonArray pr = d["pres_real"].to<JsonArray>();
+  for (uint8_t i = 0; i < kSources; ++i) pr.add(s.presReal[i]);
+  if (s.tempRealValid) d["temp_real"] = r1(s.tempRealC); else d["temp_real"] = nullptr;
+  if (!s.svc) return;
+  JsonObject m = d["sim"].to<JsonObject>();
+  m["s1"] = triName(s.sim.s1);
+  JsonArray p = m["pres"].to<JsonArray>();
+  JsonArray fc = m["fail_close"].to<JsonArray>();
+  JsonArray sk = m["stuck"].to<JsonArray>();
+  for (uint8_t i = 0; i < kSources; ++i) { p.add(triName(s.sim.pres[i])); fc.add(s.sim.failClose[i]); sk.add(s.sim.stuck[i]); }
+  if (s.sim.tempOn) m["temp"] = r1(s.sim.tempC); else m["temp"] = nullptr;
+}
+
+// A /api/service/sim törzsének beolvasása. A hiányzó mező = valós / nincs hiba. Hibánál false és err szöveg.
+inline bool parseSim(JsonVariant j, ServiceSim& out, const char*& err) {
+  ServiceSim s;
+  bool ok = true;
+  if (!j["s1"].isNull()) {
+    const char* v = j["s1"] | "real";
+    s.s1 = triFromStr(v, &ok);
+    if (!ok) { err = "s1: real|auto|manual"; return false; }
+  }
+  if (j["pres"].is<JsonArray>()) {
+    JsonArray a = j["pres"].as<JsonArray>();
+    if (a.size() != kSources) { err = "pres: 3 elem kell"; return false; }
+    for (uint8_t i = 0; i < kSources; ++i) {
+      const char* v = a[i] | "real";
+      s.pres[i] = triFromStr(v, &ok);
+      if (!ok || (v[0] == 'a' || v[0] == 'm')) { err = "pres: real|on|off"; return false; }
+    }
+  }
+  if (!j["temp"].isNull()) {
+    if (!j["temp"].is<float>()) { err = "temp: szam vagy null"; return false; }
+    const float t = j["temp"].as<float>();
+    if (!(t >= kSvcTempMinC && t <= kSvcTempMaxC)) { err = "temp: -10..110"; return false; }
+    s.tempOn = true; s.tempC = t;
+  }
+  if (j["fail_close"].is<JsonArray>()) {
+    JsonArray a = j["fail_close"].as<JsonArray>();
+    for (uint8_t i = 0; i < kSources && i < a.size(); ++i) s.failClose[i] = a[i] | false;
+  }
+  if (j["stuck"].is<JsonArray>()) {
+    JsonArray a = j["stuck"].as<JsonArray>();
+    for (uint8_t i = 0; i < kSources && i < a.size(); ++i) s.stuck[i] = a[i] | false;
+  }
+  out = s;
+  return true;
+}
+
 }  // namespace snapjson

@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "BoilerTypes.h"
 #include "ErrorCodes.h"
+#include "ServiceSim.h"
 
 struct Snapshot {
   uint32_t  uptimeS = 0;
@@ -52,6 +53,16 @@ struct Snapshot {
   bool      mqttConnected = false;
   bool      defaultCreds = false;
   char      fw[24] = {0};
+
+  // Szervizmód (szárazfutás). Aktív szervizmódban a fenti present/feedback/tempC értékek a SZIMULÁLTAK,
+  // a valós bemeneteket az alábbi *Real mezők mutatják.
+  bool       svc = false;
+  uint32_t   svcLeftS = 0;                // hátralévő idő a kilépésig
+  bool       s1RealAuto = false;          // a GPIO21 valós állapota: true = AUTO (a láb alacsony)
+  bool       presReal[kSources] = {};
+  bool       tempRealValid = false;
+  float      tempRealC = 0;
+  ServiceSim sim;
 };
 
 class ISnapshotSource {

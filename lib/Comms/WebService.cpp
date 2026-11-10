@@ -11,6 +11,7 @@
 #include <ui_dash.gz.h>
 #include <ui_dash2.gz.h>
 #include <ui_dash3.gz.h>
+#include <ui_service.gz.h>
 
 bool WebService::authorized(AsyncWebServerRequest* r) {
   if (!r->hasHeader("Authorization")) return false;
@@ -68,6 +69,7 @@ void WebService::begin() {
     JsonDocument d;
     snapjson::state(d["state"].to<JsonObject>(), s);
     snapjson::telemetry(d["tele"].to<JsonObject>(), s);
+    snapjson::service(d["svc"].to<JsonObject>(), s);
     JsonObject sys = d["sys"].to<JsonObject>();
     sys["fw"] = s.fw; sys["wifi"] = s.wifiConnected; sys["ap"] = s.apMode;
     sys["mqtt"] = s.mqttConnected; sys["default_creds"] = s.defaultCreds;
@@ -128,6 +130,41 @@ void WebService::begin() {
     JsonDocument d; d["ok"] = true; sendJson(r, d);
     restartAt_ = millis() + 800;
   });
+
+  // ---- szervizmód (szárazfutás): belépés/kilépés újraindítással, szimulált bemenetek ----
+  // Szervizmódban a valódi kontaktorok NEM mozdulnak, a vezérlés szimulált kontaktorokkal és szimulált
+  // bemenetekkel fut. Az /api/service/sim csak aktív szervizmódban működik (különben 403).
+  auto* svcEnterH = new AsyncCallbackJsonWebHandler("/api/service/enter", [this](AsyncWebServerRequest* r, JsonVariant& json) {
+    REQUIRE_AUTH(r);
+    if (!(json["confirm"] | false)) { sendErr(r, "megerosites kell (confirm: true)"); return; }
+    const int m = json["minutes"] | (int)kSvcDefaultMinutes;
+    if (m < (int)kSvcMinMinutes || m > (int)kSvcMaxMinutes) { sendErr(r, "minutes: 1..30"); return; }
+    if (snap_.snapshot().svc) { sendErr(r, "a szervizmod mar aktiv", 409); return; }
+    if (!sink_.serviceRequest(true, (uint16_t)m)) { sendErr(r, "a szervizmod nem indithato", 500); return; }
+    JsonDocument d; d["ok"] = true; d["minutes"] = m; sendJson(r, d);
+    restartAt_ = millis() + 800;                      // a válasz kimegy, utána újraindul (a kontaktorok elengednek)
+  });
+  svcEnterH->setMethod(HTTP_POST);
+  server_.addHandler(svcEnterH);
+
+  server_.on("/api/service/exit", HTTP_POST, [this](AsyncWebServerRequest* r) {
+    REQUIRE_AUTH(r);
+    if (!snap_.snapshot().svc) { sendErr(r, "a szervizmod nem aktiv", 409); return; }
+    if (!sink_.serviceRequest(false, 0)) { sendErr(r, "a kilepes nem sikerult", 500); return; }
+    JsonDocument d; d["ok"] = true; sendJson(r, d);
+    restartAt_ = millis() + 800;
+  });
+
+  auto* svcSimH = new AsyncCallbackJsonWebHandler("/api/service/sim", [this](AsyncWebServerRequest* r, JsonVariant& json) {
+    REQUIRE_AUTH(r);
+    ServiceSim s;
+    const char* err = "";
+    if (!snapjson::parseSim(json, s, err)) { sendErr(r, err); return; }
+    if (!sink_.serviceSim(s)) { sendErr(r, "a szervizmod nem aktiv", 403); return; }
+    JsonDocument d; d["ok"] = true; sendJson(r, d);
+  });
+  svcSimH->setMethod(HTTP_POST);
+  server_.addHandler(svcSimH);
 
   // ---- 24 órás előzmény (PSRAM) ----
   server_.on("/api/history", HTTP_GET, [this](AsyncWebServerRequest* r) {
@@ -224,6 +261,7 @@ void WebService::begin() {
   server_.on("/dash", HTTP_GET, serveGz(UI_DASH_GZ, UI_DASH_GZ_LEN));
   server_.on("/dash2", HTTP_GET, serveGz(UI_DASH2_GZ, UI_DASH2_GZ_LEN));
   server_.on("/dash3", HTTP_GET, serveGz(UI_DASH3_GZ, UI_DASH3_GZ_LEN));   // v3: folyékony mozgás, a kijelzővel közös design-nyelv
+  server_.on("/service", HTTP_GET, serveGz(UI_SERVICE_GZ, UI_SERVICE_GZ_LEN));   // szervizoldal (a HTML-héj nem tartalmaz adatot, az API hitelesít)
   server_.onNotFound([](AsyncWebServerRequest* r) { r->send(404, "text/plain", "Nem talalhato"); });
   server_.begin();
 }

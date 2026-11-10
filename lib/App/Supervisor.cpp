@@ -10,7 +10,8 @@
 Supervisor::Supervisor()
     : errors_(&bus_, &clock_),
       bank_(pins::K_DRV, pins::K_FB, clock_, pins::ARM_EN),
-      fsm_(bank_, clock_, &bus_, &errors_),
+      sbank_(bank_, clock_),
+      fsm_(sbank_, clock_, &bus_, &errors_),
       safety_(&errors_),
       temp_(pins::ONEWIRE),
       pzem_(Serial2, pins::PZEM_RX, pins::PZEM_TX),
@@ -47,6 +48,9 @@ void Supervisor::begin() {
   pinMode(pins::AUTO_SENSE, INPUT_PULLUP);
   Serial.begin(115200);
   Serial.printf("\nBojlervezerlo %s indul\n", FW_BUILD);
+  svc_.initFromBoot(esp_reset_reason(), millis());     // csak a kérést követő SZOFTVERES újraindítás után aktív
+  sbank_.setSimulated(svc_.active());                  // szervizmódban a valódi kontaktor-lábak végig nyitva maradnak
+  if (svc_.active()) Serial.printf("SZERVIZMOD AKTIV (%u perc): szimulalt kontaktorok, a valodi kimenetek nem mozdulnak\n", (unsigned)svc_.minutes());
 
   cmdQ_ = xQueueCreate(8, sizeof(Cmd));
   fsOk_ = LittleFS.begin(true);               // formatOnFail: sérült fájlrendszert újraformáz
@@ -78,6 +82,7 @@ void Supervisor::begin() {
   mqtt_.begin();
   bus_.subscribe(MqttService::eventThunk, &mqtt_);
   notify_.begin();
+  notify_.setMuted(svc_.active());                     // szervizmódban nincs külső értesítés a szimulált hibákról
   bus_.subscribe(NotifyService::eventThunk, &notify_);
   bus_.subscribe(Display::eventThunk, &display_);     // a kijelző naplóoldalához
   time_.begin(TZ_BUDAPEST);
@@ -89,6 +94,12 @@ void Supervisor::begin() {
   char m[48]; snprintf(m, sizeof(m), "boot %s reset=%d", FW_BUILD, (int)rr);
   e.setMsg(m);
   bus_.publish(e);
+  if (svc_.active()) {
+    Event se; se.type = EventType::System; se.ms = clock_.millis();
+    char sm[48]; snprintf(sm, sizeof(sm), "szervizmod aktiv %u perc", (unsigned)svc_.minutes());
+    se.setMsg(sm);
+    bus_.publish(se);
+  }
 
   xTaskCreatePinnedToCore(controlTask, "control", 6144, this, 5, nullptr, 1);
   xTaskCreatePinnedToCore(sensorTask,  "sensor",  4096, this, 3, nullptr, 1);
@@ -116,6 +127,25 @@ void Supervisor::reboot() {
   time_.persist();
   ESP.restart();                                   // reset: a lábak lehúzottak, a kontaktorok elengednek
 }
+
+// Szervizmód belépés/kilépés: csak a jelzőt állítja és naplóz, az újraindítást a hívó végzi (a válasz előbb kimegy).
+bool Supervisor::serviceRequest(bool enter, uint16_t minutes) {
+  if (enter) {
+    if (minutes < kSvcMinMinutes || minutes > kSvcMaxMinutes) return false;
+    ServiceMode::armNext(minutes);
+  } else {
+    if (!svc_.active()) return false;
+    ServiceMode::clearNext();
+  }
+  Event e; e.type = EventType::System; e.ms = clock_.millis();
+  e.setMsg(enter ? "szervizmod kerve, ujrainditas" : "szervizmod kilepes, ujrainditas");
+  bus_.publish(e);
+  log_.flush();
+  time_.persist();
+  return true;
+}
+
+bool Supervisor::serviceSim(const ServiceSim& s) { return svc_.set(s); }
 
 void Supervisor::drainCommands() {
   Cmd c;
@@ -180,13 +210,28 @@ void Supervisor::controlLoop() {
     drainCommands();
     net_.update(now);
 
-    const bool autoSense = digitalRead(pins::AUTO_SENSE) == LOW;
+    // --- szervizmód: lejárat, szimulált bemenetek, szimulált kontaktorok léptetése ---
+    const bool svcOn = svc_.active();
+    if (svcOn && svc_.expired(now)) {
+      Event xe; xe.type = EventType::System; xe.ms = now;
+      xe.setMsg("szervizmod lejart, ujrainditas");
+      bus_.publish(xe);
+      reboot();                                    // a jelző nincs beállítva: normál módban indul újra
+    }
+    ServiceSim sim;                                // alapértelmezés: minden valós
+    if (svcOn) { svc_.get(sim); sbank_.sim().setFaults(sim.failClose, sim.stuck); sbank_.tick(); }
+    simNow_ = sim;
+    const bool s1Real = digitalRead(pins::AUTO_SENSE) == LOW;
+    s1RealAuto_ = s1Real;
+    const bool autoSense = simBool(sim.s1, s1Real);
     SensorData sd;
     { Lock l(sensorMtx_); sd = sensor_; }
     sensorFresh_.update(now, sd.seq);
     const bool wasStale = sensorStale_;
     sensorStale_ = sensorFresh_.stale(now, kSensorStaleMs);
     if (sensorStale_) { sd.temp.valid = false; sd.pw.valid = false; }   // lefagyott SensorTask: a régi adat nem hiteles
+    tempReal_ = sd.temp;                                                // a valódi mérés (szervizoldalhoz)
+    if (svcOn && sim.tempOn) { sd.temp.valid = true; sd.temp.c = sim.tempC; }   // szimulált vízhőmérséklet
     if (sensorStale_ != wasStale) {
       Event se; se.type = EventType::System; se.ms = now;
       se.setMsg(sensorStale_ ? "szenzor adat elavult" : "szenzor adat friss");
@@ -194,16 +239,16 @@ void Supervisor::controlLoop() {
     }
 
     // --- szenzorhibák ---
-    const bool closed = bank_.closedCount() > 0;
+    const bool closed = sbank_.closedCount() > 0;
     if (closed && !wasClosed) closedAt = now;
     wasClosed = closed;
     errors_.set(ErrorCode::E01, sd.seq > 0 && !sd.temp.valid);
     const uint32_t ref = ((int32_t)(sd.pwLastOkMs - closedAt) > 0) ? sd.pwLastOkMs : closedAt;
-    errors_.set(ErrorCode::E02, sd.seq > 0 && closed && (uint32_t)(now - ref) > 10000);
+    errors_.set(ErrorCode::E02, !svcOn && sd.seq > 0 && closed && (uint32_t)(now - ref) > 10000);   // szervizmódban nincs szimulált mérő
     errors_.set(ErrorCode::E09, now > 120000 && !time_.isSynced(), time_.isValid() ? "becsult" : "nincs");
     errors_.set(ErrorCode::E11, !fsOk_ || log_.storageLow(), fsOk_ ? "" : "FS");
 
-    if (sd.seq != lastSeq_) { lastSeq_ = sd.seq; energy_.update(fsm_.active(), sd.pw.valid, sd.pw.e); }
+    if (sd.seq != lastSeq_) { lastSeq_ = sd.seq; if (!svcOn) energy_.update(fsm_.active(), sd.pw.valid, sd.pw.e); }   // szervizmódban nem számol energiát
 
     // --- hőfokhatárok és garantált minimum ---
     capGate_.update(sd.temp.c, sd.temp.valid, cfg.src, cfg.capHystC);
@@ -225,8 +270,11 @@ void Supervisor::controlLoop() {
     SelectorInput in;
     for (uint8_t i = 0; i < kSources; ++i) {
       in.cfg[i] = cfg.src[i];
-      in.st[i].present = net_.present(i);
-      in.st[i].stableSinceMs = net_.stableSinceMs(i);
+      presReal_[i] = net_.present(i);
+      const bool pr = simBool(sim.pres[i], presReal_[i]);
+      if (pr != presPrev_[i]) { presPrev_[i] = pr; presSince_[i] = now; }
+      in.st[i].present = pr;
+      in.st[i].stableSinceMs = (sim.pres[i] == Tri::Real) ? net_.stableSinceMs(i) : presSince_[i];
       in.st[i].faulted = safety_.sourceBlocked(i, now);
       in.st[i].extOk = extOk_[i];
       in.st[i].capBlocked = capGate_.blocked(i);
@@ -245,7 +293,7 @@ void Supervisor::controlLoop() {
     SafetyInput si;
     si.now = now; si.tempValid = sd.temp.valid; si.tempC = sd.temp.c;
     si.fsmActive = isActive; si.active = fsm_.active();
-    si.pzemValid = sd.pw.valid; si.v = sd.pw.v;
+    si.pzemValid = sd.pw.valid && !svcOn; si.v = sd.pw.v;   // szervizmódban a valódi mérő nem védi a szimulált forrást
     safety_.update(si);
 
     // --- döntés ---
@@ -288,10 +336,11 @@ void Supervisor::controlLoop() {
     // --- ARM / watchdog / LED ---
     const bool arm = st == FsmState::Idle || st == FsmState::DeadTime || st == FsmState::Closing ||
                      st == FsmState::Active || st == FsmState::Opening;
-    bank_.setArm(arm);
+    sbank_.setArm(arm);                              // szervizmódban nem csinál semmit (az ARM végig alacsony)
     kick = !kick;
     digitalWrite(pins::WDT_KICK, kick);
-    digitalWrite(pins::LED_OK, (st == FsmState::Active || st == FsmState::Idle) ? HIGH : LOW);
+    digitalWrite(pins::LED_OK, svcOn ? (((now / 250) & 1) ? HIGH : LOW)         // szervizmód: gyors villogás
+                                     : ((st == FsmState::Active || st == FsmState::Idle) ? HIGH : LOW));
     digitalWrite(pins::LED_ERR, (st == FsmState::Fault || errors_.worst() >= Severity::Error) ? HIGH : LOW);
     esp_task_wdt_reset();
 
@@ -333,7 +382,7 @@ void Supervisor::buildSnapshot(const Config& c, const SelectorInput& in, uint32_
   s.errorMask = errors_.mask();
   for (uint8_t i = 0; i < kSources; ++i) {
     s.present[i]  = in.st[i].present;
-    s.feedback[i] = bank_.feedback(i);
+    s.feedback[i] = sbank_.feedback(i);
     s.eligible[i] = eligible(in, i);
     s.enabled[i]  = c.src[i].enabled;
     s.extOk[i]    = extOk_[i];
@@ -356,6 +405,12 @@ void Supervisor::buildSnapshot(const Config& c, const SelectorInput& in, uint32_
   s.rssi = rssi_; s.ip = ip_; s.wifiConnected = wifiUp_; s.apMode = apMode_; s.mqttConnected = mqttUp_;
   s.defaultCreds = c.webPassHash[0] == 0;
   strlcpy(s.fw, FW_BUILD, sizeof(s.fw));
+  s.svc = svc_.active();
+  s.svcLeftS = svc_.leftS(now);
+  s.s1RealAuto = s1RealAuto_;
+  for (uint8_t i = 0; i < kSources; ++i) s.presReal[i] = presReal_[i];
+  s.tempRealValid = tempReal_.valid; s.tempRealC = tempReal_.c;
+  s.sim = simNow_;
   snap_ = s;
   shared_.set(s);
 }
@@ -414,9 +469,15 @@ void Supervisor::logLoop() {
     const Snapshot s = shared_.snapshot();
     const Config c = cfg_.get();
     time_.tick();
-    log_.tick(s, c);
-    history_.tick(s);
-    trend_.tick(s, c);
+    if (s.svc) {
+      Snapshot ls = s;                             // szervizmódban a szimulált mérések nem kerülhetnek a naplóba/előzménybe/trendbe
+      ls.tempValid = false; ls.pzemValid = false; ls.v = ls.i = ls.p = 0;
+      log_.tick(ls, c);                            // az események naplózása így is megy
+    } else {
+      log_.tick(s, c);
+      history_.tick(s);
+      trend_.tick(s, c);
+    }
     // Az új firmware 60 s stabil futás után érvényesnek jelölhető (OTA visszagörgetéshez)
     if (!marked && millis() > 60000 && s.fsm != FsmState::Fault) {
       esp_ota_mark_app_valid_cancel_rollback();

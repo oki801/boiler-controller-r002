@@ -9,7 +9,7 @@ void NotifyService::begin() {
 
 void NotifyService::eventThunk(const Event& e, void* ctx) {
   auto* self = static_cast<NotifyService*>(ctx);
-  if (self->q_ && e.type == EventType::Error) xQueueSend(self->q_, &e, 0);
+  if (self->q_ && !self->muted_ && e.type == EventType::Error) xQueueSend(self->q_, &e, 0);
 }
 
 void NotifyService::sendTest() {

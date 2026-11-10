@@ -1,0 +1,10 @@
+r010D - torlendo fajlok (a projekt mappajabol)
+
+data/www/index.htmlold      (a regi index.html masolata; a T11 szerint az r004 mar torolte, de a csomagban ujra ott volt;
+                             az index.html most valtozik, igy a regi masolat felrevezeto. Semmi nem hivatkozik ra.)
+
+Dontsd el te (nem torlom javaslat nelkul):
+bojl.html                   (a gyokerben, 2026-11-06; a build es a firmware nem hasznalja, ha nem kell, torolheto)
+
+Nem kell masolni / torolni: include/ui_*.gz.h - a build (scripts/embed_ui.py) ujragenerálja, es letrehozza az uj
+include/ui_service.gz.h-t is.
