@@ -2,6 +2,8 @@
 
 Minden modositas eggyel noveli a REVISION szamot (a csomag neve: boiler-controller-rNNN).
 
+- **r012** (2026-11-12): wifi-valaszto a beallitasok oldalon: halozatkereses legordulo listaba, jelszo, kiprobalas mentes nelkul (WifiTrial), IP-cim a weben; PROJECT.md T30-T31, README
+- **r011** (2026-11-11): fordítasi hiba megszuntetese: az r010 szervizmod-kiserlet 3 utkozo fajla torolve (ServiceBank.h, ServiceMode.h, IServiceControl.h); tesztek SimBank/ServiceSim/FSM (99 teszt); LCD szervizmod-sav es nyers S1 pin; PROJECT.md T25-T29
 - **r010D** (2026-11-10): szervizmod (szarazfutas): szimulalt kontaktorok es szimulalt bemenetek (S1, halozat-jelenlet, homerseklet), hibainjektalas (E04/E05), /service oldal es figyelmezteto sav; belepes/kilepes ujrainditassal, idokorlat 1-30 perc, ujrainditas/aramszunet utan nem marad bent; szervizmodban nincs energia-, elozmeny- es trendmentes, nincs kulso ertesites; a "Kezi uzem" uzenet a GPIO21 lab allasat is jelzi; scripts/version.py es release.py a szam utani betut (D) is kezeli
 - **r009** (2026-11-10): kijelzo-task stack 6144 -> 8192 (mert szabad stack min 293 bajt volt); ismeretlen reset ok neve; PROJECT.md T21-T22
 - **r008** (2026-11-10): indulasi naplo rendbetetele: 64 kB coredump particio, hianyzo NVS-kulcsok isKey vedelme (trend, energia, konfig), minden indulas okanak naplozasa; PROJECT.md T18-T20, README

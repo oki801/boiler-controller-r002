@@ -18,7 +18,7 @@ Supervisor::Supervisor()
       log_(time_),
       history_(time_),
       mqtt_(*this, cfg_),
-      web_(cfg_, shared_, *this, log_, history_, trend_, notify_),
+      web_(cfg_, shared_, *this, log_, history_, trend_, notify_, wifi_),
       notify_(cfg_, time_),
       display_(shared_, *this, cfg_, time_) {}
 
@@ -450,6 +450,17 @@ void Supervisor::netLoop() {
       }
     }
     wifi_.loop();
+    if (wifi_.trial().state() == WifiTrial::Connected) {   // a kipróbált hálózat működik: most kerül a konfigba
+      JsonDocument wd;
+      wd["wifi"]["ssid"] = wifi_.trial().ssid();
+      wd["wifi"]["pass"] = wifi_.trial().pass();
+      char werr[64] = "";
+      const bool saved = cfg_.patch(wd.as<JsonVariantConst>(), werr, sizeof(werr));
+      wifi_.trialSaved(saved);
+      c = cfg_.get(); ver = cfg_.version();                // a kapcsolat már él: ne induljon újracsatlakozás
+      strlcpy(ssid, c.wifiSsid, sizeof(ssid));
+      strlcpy(pass, c.wifiPass, sizeof(pass));
+    }
     const bool up = wifi_.connected();
     wifiUp_ = up; apMode_ = wifi_.apMode(); rssi_ = wifi_.rssi(); ip_ = wifi_.ip32();
     if (up) { ota_.begin(c); ota_.loop(); }

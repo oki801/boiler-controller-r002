@@ -393,6 +393,70 @@ const DAYS = ['H','K','Sze','Cs','P','Szo','V'];
 const m2t = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
 const t2m = t => { const [h, m] = (t || '00:00').split(':'); return (+h) * 60 + (+m); };
 
+/* ---------- WiFi: keresés, kipróbálás, IP-cím ---------- */
+let wifiTimer = null;
+function wifiRender(s) {
+  const link = ip => `<a href="http://${esc(ip)}" target="_blank" rel="noopener">${esc(ip)}</a>`;
+  let h = '';
+  if (s.connected) h = `Csatlakozva: <b>${esc(s.ssid)}</b> · IP-cím: <b>${link(s.ip)}</b> · jel: ${s.rssi} dBm · név: ${esc(s.host)}`;
+  else if (s.ap) h = `Nincs WiFi-kapcsolat. Saját hozzáférési pont, IP-cím: <b>${link(s.ap_ip)}</b>`;
+  else h = 'Nincs WiFi-kapcsolat.';
+  if (s.connected && s.ap) h += `<br><span style="color:var(--mute)">A saját hozzáférési pont még elérhető: ${esc(s.ap_ip)}</span>`;
+  $('#wifiStatus').innerHTML = h;
+  const m = $('#wifiMsg');
+  if (s.state === 'trying') { m.style.color = 'var(--warn)'; m.textContent = `Csatlakozás a(z) ${s.trial_ssid} hálózathoz…`; }
+  else if (s.state === 'ok') { m.style.color = 'var(--ok)'; m.textContent = `Sikeres csatlakozás: ${s.trial_ssid}. Beállítás mentve. Az új IP-cím: ${s.ip}`; }
+  else if (s.state === 'failed') { m.style.color = 'var(--bad)'; m.textContent = `Nem sikerült: ${s.reason}. A korábbi beállítás megmaradt.`; }
+}
+async function wifiRefresh() {
+  try { const s = await j('/api/wifi/status'); wifiRender(s); return s; }
+  catch (e) { const el = $('#wifiStatus'); if (el) el.textContent = 'Az állapot nem érhető el (a kapcsolat megszakadhatott). Az IP-címet a kijelzőn találod.'; return null; }
+}
+function wifiPollUntilDone() {
+  clearInterval(wifiTimer);
+  let k = 0;
+  wifiTimer = setInterval(async () => {
+    const s = await wifiRefresh();
+    if ((s && s.state !== 'trying') || ++k > 25) clearInterval(wifiTimer);
+  }, 1500);
+}
+async function wifiScan() {
+  const sel = $('#w_sel'), btn = $('#w_scan'), msg = $('#wifiMsg');
+  btn.disabled = true; msg.style.color = 'var(--mute)'; msg.textContent = 'Hálózatok keresése…';
+  let done = null;
+  for (let k = 0; k < 15 && !done; k++) {
+    try { const d = await j('/api/wifi/scan'); if (d.state === 'done') done = d; }
+    catch (e) { msg.style.color = 'var(--bad)'; msg.textContent = e.message; break; }
+    if (!done) await new Promise(r => setTimeout(r, 1000));
+  }
+  btn.disabled = false;
+  if (!done) { if (!msg.textContent.startsWith('Hálózatok')) return; msg.textContent = 'A keresés nem adott eredményt, próbáld újra.'; return; }
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— válassz hálózatot —</option>' +
+    done.nets.map(x => `<option value="${esc(x.ssid)}">${esc(x.ssid)} (${x.rssi} dBm${x.secure ? '' : ', nyitott'})</option>`).join('') +
+    '<option value="__manual__">Egyéb / rejtett hálózat…</option>';
+  if (cur) sel.value = cur;
+  msg.textContent = done.nets.length ? `${done.nets.length} hálózat található.` : 'Nem található hálózat.';
+}
+async function wifiConnect() {
+  const sel = $('#w_sel').value;
+  const ssid = sel === '__manual__' ? $('#w_manual').value.trim() : sel;
+  const msg = $('#wifiMsg');
+  if (!ssid) { msg.style.color = 'var(--bad)'; msg.textContent = 'Válassz hálózatot (vagy add meg a nevét).'; return; }
+  try { await post('/api/wifi/connect', { ssid, pass: $('#w_pw').value }); }
+  catch (e) { msg.style.color = 'var(--bad)'; msg.textContent = e.message; return; }
+  $('#w_pw').value = '';
+  msg.style.color = 'var(--warn)';
+  msg.textContent = `Csatlakozás a(z) ${ssid} hálózathoz… Ha a kapcsolat megszakad, az IP-címet a kijelzőn találod (Beállítások oldal).`;
+  wifiPollUntilDone();
+}
+function wifiInit() {
+  $('#w_scan').onclick = wifiScan;
+  $('#w_conn').onclick = wifiConnect;
+  $('#w_sel').onchange = () => { $('#w_manualBox').hidden = $('#w_sel').value !== '__manual__'; };
+  wifiRefresh();
+}
+
 async function loadCfg() {
   try { cfg = await j('/api/config'); } catch (e) { toast(e.message); $('#cfgForm').innerHTML = '<div class="panel"><h2>A beállítások nem töltődtek be</h2><p>' + esc(e.message) + '</p></div>'; return; }
   let h = '';
@@ -436,9 +500,17 @@ async function loadCfg() {
     <div><label>Min. feszültség (V)</label><input type="number" id="s_vmin" value="${S.vMin}"></div>
     <div><label>Max. feszültség (V)</label><input type="number" id="s_vmax" value="${S.vMax}"></div></div>
     <p style="color:var(--mute);font-size:.82rem">A bojler saját termosztátja és hőkioldója ettől függetlenül védi a tartályt.</p></div>
-    <div class="panel"><h2>Hálózat és MQTT</h2>
-    <label>WiFi neve</label><input type="text" id="w_ssid" value="${esc(cfg.wifi.ssid)}">
-    <label>WiFi jelszó (üresen hagyva nem változik)</label><input type="password" id="w_pass" autocomplete="new-password">
+    <div class="panel"><h2>WiFi</h2>
+    <div id="wifiStatus" style="margin-bottom:10px">Állapot betöltése…</div>
+    <label>Elérhető hálózatok</label>
+    <div class="row" style="align-items:end"><div style="flex:3"><select id="w_sel"><option value="">— nyomd meg a Keresés gombot —</option></select></div>
+    <div><button type="button" id="w_scan">Keresés</button></div></div>
+    <div id="w_manualBox" hidden><label>Hálózat neve (rejtett hálózathoz)</label><input type="text" id="w_manual" maxlength="32" autocomplete="off"></div>
+    <label>Jelszó (nyitott hálózatnál üresen hagyható)</label><input type="password" id="w_pw" autocomplete="new-password">
+    <div class="row" style="margin-top:6px"><button type="button" id="w_conn">Csatlakozás</button></div>
+    <div id="wifiMsg" style="margin-top:8px;min-height:1.3em"></div>
+    <p style="color:var(--mute);font-size:.82rem;margin:6px 0 0">A hálózat csak sikeres csatlakozás után mentődik, így egy elírt jelszó nem szakítja meg a működő kapcsolatot. Ha a kapcsolat megszakad, az eszköz IP-címe a kijelzőn látszik (Beállítások oldal).</p></div>
+    <div class="panel"><h2>MQTT</h2>
     <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="m_en" ${cfg.mqtt.enabled ? 'checked' : ''}> MQTT használata (Home Assistant)</label>
     <div class="row"><div><label>Szerver</label><input type="text" id="m_host" value="${esc(cfg.mqtt.host)}"></div>
     <div><label>Port</label><input type="number" id="m_port" value="${cfg.mqtt.port}"></div>
@@ -462,6 +534,7 @@ async function loadCfg() {
     <label>Felhasználónév</label><input type="text" id="u_name" value="${esc(cfg.web.user)}">
     <label>Új jelszó (üresen hagyva nem változik)</label><input type="password" id="u_pass" autocomplete="new-password"></div>`;
   $('#cfgForm').innerHTML = h;
+  wifiInit();
   $('#n_test').onclick = async () => {
     try { await post('/api/notify/test'); toast('Teszt üzenet sorba állítva, az eredmény a Rendszer fülön látszik'); }
     catch (x) { toast(x.message); }
@@ -482,7 +555,7 @@ $('#saveCfg').onclick = async () => {
     timing:{ deadMs:Math.round(n('t_dead').value * 1000), dwellMs:Math.round(n('t_dwell').value * 1000),
              availOnMs:Math.round(n('t_on').value * 1000), availOffMs:Math.round(n('t_off').value * 1000) },
     safety:{ tMaxC:+n('s_tmax').value, maxSwitchesPerHour:+n('s_sw').value, vMin:+n('s_vmin').value, vMax:+n('s_vmax').value },
-    wifi:{ ssid:n('w_ssid').value }, mqtt:{ enabled:n('m_en').checked, host:n('m_host').value, port:+n('m_port').value, user:n('m_user').value },
+    mqtt:{ enabled:n('m_en').checked, host:n('m_host').value, port:+n('m_port').value, user:n('m_user').value },
     web:{ user:n('u_name').value },
     target:+n('t_target').value, hyst:+n('t_hyst').value,
     capHystC:+n('cap_hyst').value,
@@ -493,7 +566,6 @@ $('#saveCfg').onclick = async () => {
   };
   if (n('n_url').value) body.notify.url = n('n_url').value;
   if (n('n_token').value) body.notify.token = n('n_token').value;
-  if (n('w_pass').value) body.wifi.pass = n('w_pass').value;
   if (n('m_pass').value) body.mqtt.pass = n('m_pass').value;
   if (n('u_pass').value) body.web.pass = n('u_pass').value;
   try { await post('/api/config', body); toast('Mentve'); loadCfg(); }

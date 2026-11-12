@@ -9,6 +9,10 @@
 #include "TrendMonitor.h"
 #include "Thermostat.h"
 #include "SensorFreshness.h"
+#include "Fakes.h"
+#include "ServiceSim.h"
+#include "WifiTrial.h"
+#include "SimBank.h"
 
 void setUp() {}
 void tearDown() {}
@@ -419,6 +423,121 @@ void test_freshness_millis_wraparound() {
   TEST_ASSERT_TRUE(f.stale(0x00002000u, 5000));             // ~8,4 s telt el
 }
 
+// ---- szervizmód: ServiceSim és SimBank
+void test_servicesim_tri_parsing() {
+  bool ok = false;
+  TEST_ASSERT_EQUAL(Tri::Real, triFromStr("real", &ok)); TEST_ASSERT_TRUE(ok);
+  TEST_ASSERT_EQUAL(Tri::On,   triFromStr("on", &ok));   TEST_ASSERT_TRUE(ok);
+  TEST_ASSERT_EQUAL(Tri::Off,  triFromStr("off", &ok));  TEST_ASSERT_TRUE(ok);
+  TEST_ASSERT_EQUAL(Tri::On,   triFromStr("auto", &ok)); TEST_ASSERT_TRUE(ok);
+  TEST_ASSERT_EQUAL(Tri::Off,  triFromStr("manual", &ok)); TEST_ASSERT_TRUE(ok);
+  triFromStr("zzz", &ok);
+  TEST_ASSERT_FALSE(ok);                                      // ismeretlen szöveg: hiba
+  TEST_ASSERT_EQUAL(Tri::Real, triFromStr(nullptr, &ok));     // hiányzó mező: valós
+}
+void test_servicesim_override_and_clamp() {
+  TEST_ASSERT_TRUE(simBool(Tri::Real, true));
+  TEST_ASSERT_FALSE(simBool(Tri::Real, false));
+  TEST_ASSERT_TRUE(simBool(Tri::On, false));
+  TEST_ASSERT_FALSE(simBool(Tri::Off, true));
+  TEST_ASSERT_EQUAL_FLOAT(kSvcTempMaxC, clampSimTemp(500.0f));
+  TEST_ASSERT_EQUAL_FLOAT(kSvcTempMinC, clampSimTemp(-500.0f));
+  TEST_ASSERT_EQUAL_FLOAT(42.0f, clampSimTemp(42.0f));
+  ServiceSim s;                                               // alapból minden valós, nincs hibainjektálás
+  TEST_ASSERT_EQUAL(Tri::Real, s.s1);
+  TEST_ASSERT_FALSE(s.tempOn);
+  for (uint8_t i = 0; i < kSources; ++i) { TEST_ASSERT_EQUAL(Tri::Real, s.pres[i]); TEST_ASSERT_FALSE(s.failClose[i]); TEST_ASSERT_FALSE(s.stuck[i]); }
+}
+void test_simbank_delayed_feedback_and_interlock() {
+  FakeClock clk; SimBank b(clk);
+  clk.t = 10000;
+  TEST_ASSERT_TRUE(b.close(0));
+  TEST_ASSERT_FALSE(b.feedback(0));                           // a visszajelzés késik
+  clk.t += 40; b.tick();
+  TEST_ASSERT_TRUE(b.feedback(0));
+  TEST_ASSERT_EQUAL_UINT8(1, b.closedCount());
+  TEST_ASSERT_FALSE(b.close(1));                              // másik forrás: reteszelés
+  b.openAll();
+  clk.t += 40; b.tick();
+  TEST_ASSERT_EQUAL_UINT8(0, b.closedCount());
+  TEST_ASSERT_FALSE(b.close(1));                              // a kemény holtidő (2 s) még nem telt le
+  clk.t += kHardMinDeadMs; b.tick();
+  TEST_ASSERT_TRUE(b.close(1));
+}
+void test_simbank_fault_injection() {
+  FakeClock clk; SimBank b(clk);
+  clk.t = 10000;
+  const bool fcA[kSources] = {true, false, false}, stNo[kSources] = {false, false, false};
+  b.setFaults(fcA, stNo);
+  TEST_ASSERT_TRUE(b.close(0));                               // a parancs elfogadva, de nincs visszajelzés (E04)
+  clk.t += 2000; b.tick();
+  TEST_ASSERT_FALSE(b.feedback(0));
+  b.openAll();
+  clk.t += kHardMinDeadMs + 40; b.tick();
+  const bool fcNo[kSources] = {false, false, false}, stB[kSources] = {false, true, false};
+  b.setFaults(fcNo, stB);
+  TEST_ASSERT_TRUE(b.close(1));
+  clk.t += 40; b.tick();
+  TEST_ASSERT_TRUE(b.feedback(1));
+  b.openAll();
+  clk.t += 5000; b.tick();
+  TEST_ASSERT_TRUE(b.feedback(1));                            // beragadt: nem enged el (E05)
+  TEST_ASSERT_EQUAL_UINT8(1, b.closedCount());
+}
+
+// ---- WifiTrial: WiFi kipróbálása mentés nélkül
+void test_wifitrial_rejects_invalid_input() {
+  WifiTrial t;
+  TEST_ASSERT_FALSE(t.request("", "jelszo123", 0));            // üres SSID
+  TEST_ASSERT_FALSE(t.request("0123456789012345678901234567890123", "jelszo123", 0));   // 34 karakter
+  TEST_ASSERT_FALSE(t.request("otthon", "rovid", 0));          // 5 karakteres jelszó (WPA: legalább 8)
+  TEST_ASSERT_EQUAL(WifiTrial::Idle, t.state());
+  TEST_ASSERT_TRUE(t.request("nyitott", "", 0));               // nyitott hálózat: üres jelszó rendben
+  TEST_ASSERT_EQUAL_STRING("nyitott", t.ssid());
+}
+void test_wifitrial_success_path_and_save() {
+  WifiTrial t;
+  TEST_ASSERT_TRUE(t.request("otthon", "jelszo1234", 1000));
+  TEST_ASSERT_EQUAL(WifiTrial::Pending, t.state());
+  TEST_ASSERT_EQUAL(WifiTrial::None, t.update(1200, false, 0));            // még a késleltetés: a HTTP-válasz kiér
+  TEST_ASSERT_EQUAL(WifiTrial::Start, t.update(1500, false, 0));
+  TEST_ASSERT_EQUAL(WifiTrial::Trying, t.state());
+  TEST_ASSERT_EQUAL(WifiTrial::None, t.update(4000, true, 3));
+  TEST_ASSERT_EQUAL(WifiTrial::Connected, t.state());
+  t.saved(true);
+  TEST_ASSERT_EQUAL(WifiTrial::Saved, t.state());
+  TEST_ASSERT_EQUAL_STRING("jelszo1234", t.pass());
+}
+void test_wifitrial_timeout_restores_with_reason() {
+  WifiTrial t;
+  t.request("otthon", "jelszo1234", 0);
+  t.update(600, false, 0);                                                  // Start
+  TEST_ASSERT_EQUAL(WifiTrial::None, t.update(10000, false, WifiTrial::kWlConnectFailed));
+  TEST_ASSERT_EQUAL(WifiTrial::Restore, t.update(600 + WifiTrial::kTimeoutMs, false, 6));
+  TEST_ASSERT_EQUAL(WifiTrial::Failed, t.state());
+  TEST_ASSERT_EQUAL(WifiTrial::BadPassword, t.reason());
+  WifiTrial n;
+  n.request("nincs", "jelszo1234", 0); n.update(600, false, 0);
+  n.update(5000, false, WifiTrial::kWlNoSsidAvail);
+  n.update(600 + WifiTrial::kTimeoutMs, false, 6);
+  TEST_ASSERT_EQUAL(WifiTrial::NoSsid, n.reason());                         // a hálózat nem található
+  WifiTrial u;
+  u.request("lassu", "jelszo1234", 0); u.update(600, false, 0);
+  u.update(600 + WifiTrial::kTimeoutMs, false, 0);
+  TEST_ASSERT_EQUAL(WifiTrial::Timeout, u.reason());
+}
+void test_wifitrial_save_failure_and_busy() {
+  WifiTrial t;
+  t.request("otthon", "jelszo1234", 0); t.update(600, false, 0);
+  TEST_ASSERT_FALSE(t.request("masik", "jelszo5678", 700));                 // futó kipróbálás közben nem indul új
+  t.update(1000, true, 3);
+  t.saved(false);                                                           // a konfig mentése nem sikerült
+  TEST_ASSERT_EQUAL(WifiTrial::Failed, t.state());
+  TEST_ASSERT_EQUAL(WifiTrial::SaveFailed, t.reason());
+  TEST_ASSERT_TRUE(t.request("masik", "jelszo5678", 2000));                 // utána újra lehet próbálni
+  TEST_ASSERT_EQUAL_STRING("masik", t.ssid());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_presence_basic);
@@ -470,5 +589,13 @@ int main(int, char**) {
   RUN_TEST(test_freshness_stale_when_seq_stops);
   RUN_TEST(test_freshness_recovers_when_seq_moves);
   RUN_TEST(test_freshness_millis_wraparound);
+  RUN_TEST(test_servicesim_tri_parsing);
+  RUN_TEST(test_servicesim_override_and_clamp);
+  RUN_TEST(test_simbank_delayed_feedback_and_interlock);
+  RUN_TEST(test_simbank_fault_injection);
+  RUN_TEST(test_wifitrial_rejects_invalid_input);
+  RUN_TEST(test_wifitrial_success_path_and_save);
+  RUN_TEST(test_wifitrial_timeout_restores_with_reason);
+  RUN_TEST(test_wifitrial_save_failure_and_busy);
   return UNITY_END();
 }

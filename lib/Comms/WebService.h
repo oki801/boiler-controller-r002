@@ -10,14 +10,15 @@
 #include <HistoryService.h>
 #include <TrendService.h>
 #include "NotifyService.h"
+#include "WifiManager.h"
 
 // REST API + statikus webes felület (LittleFS:/www). A kezelő felület csak KÉRÉSEKET ad a vezérlésnek.
 // Hitelesítés: HTTP Basic (a jelszó SHA-256 hash-e van tárolva).
 class WebService {
  public:
   WebService(ConfigStore& cfg, const ISnapshotSource& snap, ICommandSink& sink, LogService& log, HistoryService& hist,
-             TrendService& trend, NotifyService& notify)
-      : cfg_(cfg), snap_(snap), sink_(sink), log_(log), hist_(hist), trend_(trend), notify_(notify), server_(80) {}
+             TrendService& trend, NotifyService& notify, WifiManager& wifi)
+      : cfg_(cfg), snap_(snap), sink_(sink), log_(log), hist_(hist), trend_(trend), notify_(notify), wifi_(wifi), server_(80) {}
   void begin();
   void loop();                                       // késleltetett újraindítás kezelése
  private:
@@ -33,6 +34,7 @@ class WebService {
   HistoryService& hist_;
   TrendService& trend_;
   NotifyService& notify_;
+  WifiManager& wifi_;
   AsyncWebServer server_;
   uint32_t restartAt_ = 0;
 };

@@ -214,6 +214,90 @@ void WebService::begin() {
     r->send(LittleFS, path, "text/csv", true);
   });
 
+  // ---- WiFi: hálózatkeresés, kipróbálás mentés nélkül, állapot (a beállítások oldal "WiFi" paneljéhez) ----
+  // GET /api/wifi/scan: elindítja a keresést; {"state":"running"} amíg fut, majd {"state":"done","nets":[...]}
+  server_.on("/api/wifi/scan", HTTP_GET, [this](AsyncWebServerRequest* r) {
+    REQUIRE_AUTH(r);
+    JsonDocument d;
+    const int n = wifi_.scanResult();
+    if (n < 0) {
+      if (n == -2) wifi_.scanStart();                     // még nem indult el: indítjuk (a -1 már fut)
+      d["state"] = "running";
+      sendJson(r, d);
+      return;
+    }
+    int idx[24]; int cnt = 0;
+    for (int i = 0; i < n && cnt < 24; ++i) {
+      const String s = WiFi.SSID(i);
+      if (s.length() == 0) continue;                      // rejtett hálózat: kézzel adható meg
+      int dup = -1;
+      for (int k = 0; k < cnt; ++k) if (WiFi.SSID(idx[k]) == s) { dup = k; break; }
+      if (dup >= 0) { if (WiFi.RSSI(i) > WiFi.RSSI(idx[dup])) idx[dup] = i; continue; }   // azonos nevű: a legerősebb marad
+      idx[cnt++] = i;
+    }
+    for (int a = 1; a < cnt; ++a) {                       // jelerősség szerint csökkenő sorrend
+      const int v = idx[a]; int b = a - 1;
+      while (b >= 0 && WiFi.RSSI(idx[b]) < WiFi.RSSI(v)) { idx[b + 1] = idx[b]; --b; }
+      idx[b + 1] = v;
+    }
+    d["state"] = "done";
+    JsonArray nets = d["nets"].to<JsonArray>();
+    for (int k = 0; k < cnt; ++k) {
+      JsonObject o = nets.add<JsonObject>();
+      o["ssid"] = String(WiFi.SSID(idx[k]));
+      o["rssi"] = WiFi.RSSI(idx[k]);
+      o["secure"] = WiFi.encryptionType(idx[k]) != WIFI_AUTH_OPEN;
+    }
+    WiFi.scanDelete();
+    sendJson(r, d);
+  });
+
+  // POST /api/wifi/connect {"ssid":"...","pass":"..."}: kipróbálja a hálózatot; csak sikeres csatlakozás után ment
+  auto* wifiConnH = new AsyncCallbackJsonWebHandler("/api/wifi/connect", [this](AsyncWebServerRequest* r, JsonVariant& json) {
+    REQUIRE_AUTH(r);
+    const char* ssid = json["ssid"] | "";
+    const char* pass = json["pass"] | "";
+    const WifiTrial::State st = wifi_.trial().state();
+    if (st == WifiTrial::Pending || st == WifiTrial::Trying) { sendErr(r, "mar fut egy csatlakozas", 409); return; }
+    const size_t sl = strlen(ssid), pl = strlen(pass);
+    if (sl < 1 || sl > 32) { sendErr(r, "a halozat neve 1-32 karakter"); return; }
+    if (pl != 0 && (pl < 8 || pl > 64)) { sendErr(r, "a jelszo 8-64 karakter (nyitott halozatnal ures)"); return; }
+    if (!wifi_.trialRequest(ssid, pass)) { sendErr(r, "a kerest nem lehetett elinditani"); return; }
+    JsonDocument d; d["ok"] = true; sendJson(r, d);
+  });
+  wifiConnH->setMethod(HTTP_POST);
+  server_.addHandler(wifiConnH);
+
+  // GET /api/wifi/status: a kipróbálás állapota, az aktuális hálózat és az IP-cím
+  server_.on("/api/wifi/status", HTTP_GET, [this](AsyncWebServerRequest* r) {
+    REQUIRE_AUTH(r);
+    const WifiTrial& t = wifi_.trial();
+    JsonDocument d;
+    switch (t.state()) {
+      case WifiTrial::Idle:      d["state"] = "idle"; break;
+      case WifiTrial::Saved:     d["state"] = "ok"; break;
+      case WifiTrial::Failed:    d["state"] = "failed"; break;
+      default:                   d["state"] = "trying"; break;       // Pending, Trying, Connected (mentés folyamatban)
+    }
+    if (t.state() != WifiTrial::Idle) d["trial_ssid"] = String(t.ssid());
+    if (t.state() == WifiTrial::Failed) {
+      switch (t.reason()) {
+        case WifiTrial::NoSsid:       d["reason"] = "a halozat nem talalhato"; break;
+        case WifiTrial::BadPassword:  d["reason"] = "a csatlakozas sikertelen (hibas jelszo?)"; break;
+        case WifiTrial::SaveFailed:   d["reason"] = "a halozat mukodik, de a mentes nem sikerult"; break;
+        default:                      d["reason"] = "idotullepes"; break;
+      }
+    }
+    d["connected"] = wifi_.connected();
+    d["ssid"] = wifi_.ssid();
+    d["ip"] = wifi_.staIp();
+    d["rssi"] = wifi_.rssi();
+    d["ap"] = wifi_.apMode();
+    d["ap_ip"] = wifi_.apIp();
+    d["host"] = String(cfg_.get().deviceId) + ".local";
+    sendJson(r, d);
+  });
+
   // ---- OTA (firmware vagy fájlrendszer): POST /update[?type=fs] ----
   server_.on("/update", HTTP_POST,
     [this](AsyncWebServerRequest* r) {
