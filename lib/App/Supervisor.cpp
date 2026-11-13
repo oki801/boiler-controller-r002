@@ -40,6 +40,22 @@ static const char* resetName(esp_reset_reason_t r) {
   }
 }
 
+// Indulási információ a soros vonalra (verzió, chip, memória, beállítások)
+static void printBanner(const Config& c) {
+  Serial.println("----------------------------------------------");
+  Serial.printf("Forditva:  %s %s\n", __DATE__, __TIME__);
+  Serial.printf("Eszkoz:    %s, rev %u, %u mag, %u MHz, azonosito: %s\n", ESP.getChipModel(), (unsigned)ESP.getChipRevision(),
+                (unsigned)ESP.getChipCores(), (unsigned)ESP.getCpuFreqMHz(), c.deviceId);
+  Serial.printf("Flash:     %u MB, PSRAM: %u kB\n", (unsigned)(ESP.getFlashChipSize() / 1048576), (unsigned)(ESP.getPsramSize() / 1024));
+  Serial.printf("Program:   %u kB, szabad hely a frissitesre: %u kB\n", (unsigned)(ESP.getSketchSize() / 1024), (unsigned)(ESP.getFreeSketchSpace() / 1024));
+  Serial.printf("Memoria:   szabad %u kB, legnagyobb blokk %u kB\n", (unsigned)(ESP.getFreeHeap() / 1024), (unsigned)(ESP.getMaxAllocHeap() / 1024));
+  Serial.printf("MAC:       %s\n", WiFi.macAddress().c_str());
+  Serial.printf("Beallitas: cel %.0f C, hiszterezis %.1f C, garantalt minimum: %s\n", (double)c.targetC, (double)c.hystC, c.guar.enabled ? "be" : "ki");
+  for (uint8_t i = 0; i < kSources; ++i)
+    Serial.printf("Forras %u:  %s, %s, max %.0f C\n", (unsigned)(i + 1), c.srcName[i], c.src[i].enabled ? "engedelyezve" : "tiltva", (double)c.src[i].maxTempC);
+  Serial.println("----------------------------------------------");
+}
+
 void Supervisor::begin() {
   bank_.begin();                                   // 1. minden kimenet biztonságos (nyitott) állapotba
   pinMode(pins::WDT_KICK, OUTPUT);
@@ -60,6 +76,7 @@ void Supervisor::begin() {
   energyStore_.begin();
   energyStore_.load(energy_);
   const Config c = cfg_.get();
+  printBanner(c);
 
   // Gyakori újraindulás felismerése (E10): 3 hibás reset 10 percen belül -> zárolt biztonságos mód
   rstPrefs_.begin("boiler", false);
@@ -438,6 +455,10 @@ void Supervisor::netLoop() {
   char ssid[33], pass[65];
   strlcpy(ssid, c.wifiSsid, sizeof(ssid));
   strlcpy(pass, c.wifiPass, sizeof(pass));
+  // a soros vonalra csak a VÁLTOZÁSOK kerülnek (nem periodikus sorok)
+  bool pUp = false, pAp = false, pMqtt = false, pSync = false;
+  uint32_t pIp = 0;
+  WifiTrial::State pTrial = WifiTrial::Idle;
 
   for (;;) {
     if (cfg_.version() != ver) {
@@ -463,9 +484,24 @@ void Supervisor::netLoop() {
     }
     const bool up = wifi_.connected();
     wifiUp_ = up; apMode_ = wifi_.apMode(); rssi_ = wifi_.rssi(); ip_ = wifi_.ip32();
+    if (up != pUp || apMode_ != pAp || ip_ != pIp) {
+      if (up) Serial.printf("WiFi: csatlakozva: %s, IP %s, jel %d dBm\n", wifi_.ssid().c_str(), wifi_.staIp().c_str(), (int)rssi_);
+      else if (apMode_) Serial.printf("WiFi: nincs kapcsolat, sajat hozzaferesi pont (AP), IP %s\n", wifi_.apIp().c_str());
+      else Serial.println("WiFi: a kapcsolat megszakadt, ujracsatlakozas...");
+      if (up && apMode_) Serial.printf("WiFi: a sajat hozzaferesi pont meg elerheto, IP %s\n", wifi_.apIp().c_str());
+      pUp = up; pAp = apMode_; pIp = ip_;
+    }
+    if (wifi_.trial().state() != pTrial) {                 // a webes WiFi-választó állapotváltásai
+      pTrial = wifi_.trial().state();
+      if (pTrial == WifiTrial::Pending) Serial.printf("WiFi: halozat kiprobalasa: %s\n", wifi_.trial().ssid());
+      else if (pTrial == WifiTrial::Saved) Serial.printf("WiFi: a halozat mukodik, beallitas mentve: %s\n", wifi_.trial().ssid());
+      else if (pTrial == WifiTrial::Failed) Serial.printf("WiFi: kiprobalas sikertelen (%s), vissza a korabbi halozatra\n", wifi_.trial().ssid());
+    }
     if (up) { ota_.begin(c); ota_.loop(); }
     mqtt_.loop(shared_.snapshot());
     mqttUp_ = mqtt_.connected();
+    if (mqttUp_ != pMqtt) { Serial.printf("MQTT: %s\n", mqttUp_ ? "csatlakozva" : "a kapcsolat megszakadt"); pMqtt = mqttUp_; }
+    if (time_.isSynced() && !pSync) { char iso[32]; time_.iso(iso, sizeof(iso)); Serial.printf("Ido: NTP szinkron kesz: %s\n", iso); pSync = true; }
     errors_.set(ErrorCode::E08, millis() > 60000 && (!up || (c.mqttEnabled && !mqttUp_)));
     web_.loop();
     vTaskDelay(pdMS_TO_TICKS(20));

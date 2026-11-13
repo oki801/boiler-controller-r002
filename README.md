@@ -102,6 +102,13 @@ Az MQTT-n át a WiFi, a jelszavak és az azonosító **nem** módosítható.
 A **Beállítások** fül **WiFi** panelén: *Keresés* → hálózat kiválasztása a listából (rejtett hálózathoz: „Egyéb / rejtett hálózat…”) → jelszó → *Csatlakozás*. Az eszköz előbb kipróbálja a hálózatot, és csak sikeres csatlakozás után menti; ha nem sikerül, a korábbi beállítás marad, és a panel kiírja az okot. A panel mindig mutatja az aktuális hálózatot, az **IP-címet** (kattintható), a jelerősséget és a `.local` nevet. Ha a kapcsolat a váltáskor megszakad, az IP-cím a kijelzőn is látszik (Beállítások oldal, és csatlakozáskor felugró üzenetben).
 API (hitelesített): `GET /api/wifi/scan` (elindítja, majd `done` állapotban a listát adja), `POST /api/wifi/connect` `{"ssid":"...","pass":"..."}`, `GET /api/wifi/status`.
 
+## Soros napló (115200 baud)
+
+Indulásnál infóblokk: verzió, fordítás ideje, chip és memória, MAC, célhőfok és a források. Utána **csak változáskor** ír, periodikus sor nincs:
+- események: `FORRAS-VALTAS 1 -> 2`, `HIBA E08 FELLEPETT: ...`, `ALLAPOT`, `PARANCS`, `RENDSZER` (idővel és működési idővel: `[2026-11-13 10:22:01 up 00:12:34]`)
+- WiFi: csatlakozva (hálózat, IP, jel), saját hozzáférési pont, megszakadt kapcsolat, a webes hálózatváltás lépései
+- MQTT csatlakozás/megszakadás, NTP-szinkron, a reset oka (`Reset ok: ...`)
+
 ## Webes felületek
 
 - `/` a teljes kezelőfelület (beállítások, napló, trend, OTA).

@@ -225,13 +225,14 @@ A 230 V-os rész kivitelezését jogosult villanyszerelőnek kell végeznie. A r
 | r010D | Szervizmód (szárazfutás): belépés újraindítással (RTC-memória), szimulált kontaktorok (`SimBank`, `ServiceBank`) és bemenetek (`ServiceSim`: S1, hálózat-jelenlét, hőmérséklet), hibainjektálás (E04/E05), `/service` oldal és figyelmeztető sáv a főoldalon. |
 | r011 | Fordítási hiba megszüntetése: a korábbi szervizmód-kísérlet 3 ütköző fájlja törölve (`ServiceBank.h`, `ServiceMode.h`, `IServiceControl.h`); tesztek a `SimBank`-hoz, `ServiceSim`-hez és az FSM-hez a szimulált egységgel (99 teszt); szervizmód-sáv és nyers S1-pin az LCD-n. |
 | r012 | WiFi-választó a beállítások oldalon: hálózatkeresés legördülő listába, jelszó, kipróbálás mentés nélkül (sikeres csatlakozás után ment), az IP-cím a panelen látszik; `WifiTrial` állapotgép tesztekkel (103 teszt). |
+| r013 | Soros napló: a kijelző periodikus sorai (stack, rajzolási idő) megszűntek; helyettük indulási információ (verzió, chip, memória, beállítások) és változás-alapú sorok (események, WiFi, MQTT, idő). |
 
 ---
 
 ## 8. Teendők (kódátnézés, 2026-11-08, r002 alapján)
 
 A lista egy **statikus kódátnézésből** készült: a kód nem lett lefordítva és nem futott. A hibák gyanúk, amíg hardveren nincsenek igazolva.
-Minden lényeges módosítás új revíziót kap (a következő: **r013**).
+Minden lényeges módosítás új revíziót kap (a következő: **r014**).
 
 ### 8.1 Javítandó hibák
 
@@ -283,3 +284,4 @@ Minden lényeges módosítás új revíziót kap (a következő: **r013**).
 | T29 | Tisztítandó a repóból: `data/www/index.htmlold` (azonos a régi `index.html`-lel), `bojl.html`, `bojler 09v261110911.zip`, `lib.zip` (kb. 500 kB bináris, a git előzményekben megmarad). Részletek: `TORLENDO.txt`. | nyitott (a te döntésed) |
 | T30 | A WiFi-t eddig csak szövegmezőkkel lehetett megadni (név és jelszó beírva, mentés után újracsatlakozás), IP-cím nem látszott a weben, és egy elírt jelszó elvette a működő kapcsolatot. **Megoldás:** új "WiFi" panel a beállítások oldalon: Keresés gomb, legördülő lista (jelerősség szerint, az azonos nevűek közül a legerősebb), jelszó, Csatlakozás. A hálózatot az eszköz előbb kipróbálja (`WifiTrial`, 20 s), és csak siker után menti; sikertelenség esetén visszaáll a korábbira, és az okot kiírja (nem található / hibás jelszó / időtúllépés). Az aktuális IP-cím, a jel és a `.local` név mindig látszik; a saját hozzáférési pont sikeres csatlakozás után még 60 s-ig él, hogy az új cím leolvasható legyen. API: `GET /api/wifi/scan`, `POST /api/wifi/connect`, `GET /api/wifi/status` (mind hitelesített). | KÉSZ r012, hardveren nem próbálva |
 | T31 | Hardveren ellenőrizni a WiFi-választót: a keresés eredménye (rejtett hálózat, azonos nevű hálózatok), jó és rossz jelszó (a visszaállás a régi hálózatra), váltás közben a böngésző kapcsolatának megszakadása (a telefon másik hálózaton: az IP a kijelzőn marad), a konfig mentése siker után (újraindítás után is az új hálózat). | nyitott |
+| T32 | A soros vonalon percenként ismétlődtek a kijelző `[stack]` és `[display] rajzolas max` sorai, ezek feleslegesek. **Megoldás:** törölve. Helyette: **indulásnál** egy infóblokk (fordítás ideje, chip és verzió, flash/PSRAM, program- és szabad memória, MAC, célhőfok, források), majd csak **változáskor** írnak: minden esemény (`FORRAS-VALTAS`, `HIBA E.. FELLEPETT/megszunt`, `ALLAPOT`, `PARANCS`, `RENDSZER`, idővel és működési idővel), a WiFi (csatlakozva + IP, AP, megszakadt, a webes hálózatváltás lépései), az MQTT és az NTP-szinkron. | KÉSZ r013, hardveren nem próbálva |

@@ -42,11 +42,33 @@ void LogService::writeEvents(const char* line) {
   }
 }
 
+// Az esemény olvasható sora a soros vonalra (a CSV-naplóval azonos eseményekből; ritkák, ezért nem terhelik a vonalat)
+static void serialEvent(const Event& e, const char* when) {
+  const unsigned long up = e.ms / 1000;
+  const unsigned h = (unsigned)(up / 3600), m = (unsigned)(up / 60 % 60), s = (unsigned)(up % 60);
+  char head[48];
+  snprintf(head, sizeof(head), "[%s up %02u:%02u:%02u]", when, h, m, s);
+  switch (e.type) {
+    case EventType::Switch:
+      Serial.printf("%s FORRAS-VALTAS %c -> %c  %s\n", head, e.from < 0 ? '-' : '1' + e.from, e.to < 0 ? '-' : '1' + e.to, e.msg);
+      break;
+    case EventType::Error: {
+      const ErrorInfo& ei = errorInfo(e.code);
+      Serial.printf("%s HIBA %s %s: %s %s\n", head, ei.code, e.raised ? "FELLEPETT" : "megszunt", ei.text, e.msg);
+      break;
+    }
+    case EventType::State:   Serial.printf("%s ALLAPOT  %s\n", head, e.msg); break;
+    case EventType::Command: Serial.printf("%s PARANCS  %s\n", head, e.msg); break;
+    default:                 Serial.printf("%s RENDSZER %s\n", head, e.msg); break;
+  }
+}
+
 void LogService::drainEvents() {
   Event e;
   char iso[32], line[kLineLen];
   while (q_ && xQueueReceive(q_, &e, 0) == pdTRUE) {
     time_.iso(iso, sizeof(iso));
+    serialEvent(e, time_.isValid() ? iso : "ido?");
     const char* code = e.code == ErrorCode::None ? "" : errorInfo(e.code).code;
     snprintf(line, sizeof(line), "%s,%lu,%s,%s,%d,%d,%s", iso, (unsigned long)(e.ms / 1000), typeName(e.type),
              code, e.from < 0 ? 0 : e.from + 1, e.to < 0 ? 0 : e.to + 1, e.msg);

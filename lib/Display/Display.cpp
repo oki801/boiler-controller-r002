@@ -273,17 +273,9 @@ void Display::flushPending(uint32_t now) {
 
 void Display::loop() {
   bool redraw = true;
-  uint32_t lastDrawMs = 0, lastStepMs = millis(), lastStackChkMs = 0, maxDrawMs = 0;
-  UBaseType_t minStackFree = (UBaseType_t)-1;
+  uint32_t lastDrawMs = 0, lastStepMs = millis();
   for (;;) {
     const uint32_t now = millis();
-    if ((uint32_t)(now - lastStackChkMs) >= 60000) {                      // szabad stack: csak új minimumnál ír
-      lastStackChkMs = now;
-      const UBaseType_t fr = uxTaskGetStackHighWaterMark(nullptr);
-      if (fr < minStackFree) { minStackFree = fr; Serial.printf("[stack] display szabad min: %u bajt\n", (unsigned)fr); }
-      Serial.printf("[display] rajzolas max %u ms az elmult percben\n", (unsigned)maxDrawMs);   // 66 ms alatt marad a 15 fps
-      maxDrawMs = 0;
-    }
     pollButtons(now, redraw);
     flushPending(now);
     if (page_ != PgHome && (uint32_t)(now - lastInputMs_) > 30000) { startTransition(); page_ = PgHome; scroll_ = 0; redraw = true; }   // visszatér a főoldalra
@@ -296,8 +288,6 @@ void Display::loop() {
       step(now - lastStepMs, snap, cfg);
       lastStepMs = now; lastDrawMs = now; redraw = false;
       draw(snap, cfg);
-      const uint32_t took = millis() - now;
-      if (took > maxDrawMs) maxDrawMs = took;
     }
     vTaskDelay(pdMS_TO_TICKS(8));
   }
@@ -529,7 +519,7 @@ void Display::pageHome(const Snapshot& s, const Config& c) {
   const bool capHold = anyCapped && !anyUsable;
   const bool sensorFault = !off && !fault && (s.errorMask & (1u << (uint8_t)ErrorCode::E01));   // fűtés engedélyezett, de a hőmérő nem látszik
   if (fault)                       { icon = Icon::Warn; snprintf(status, sizeof(status), "Hiba %s", s.fsm == FsmState::Fault ? errorInfo(s.fsmError).code : "!"); text = status; }
-  else if (s.manualBypass)         { icon = Icon::Manual; text = "Kézi üzem (S1)"; }
+  else if (s.manualBypass)         { icon = Icon::Manual; snprintf(status, sizeof(status), "Kézi üzem (S1 pin %s)", s.s1RealAuto ? "LOW" : "HIGH"); text = status; }   // a nyers láb: AUTO = LOW
   else if (off)                    { icon = Icon::Power; text = "Kikapcsolva"; }
   else if (s.heat == HeatPhase::Heating && s.active < 0 && capHold) { icon = Icon::Smile; text = "Forrás hőfokhatár"; }
   else if (s.heat == HeatPhase::Heating && s.active < 0) { icon = Icon::Hourglass; text = "Nincs hálózat"; }
@@ -571,8 +561,14 @@ void Display::pageHome(const Snapshot& s, const Config& c) {
     // állapotsor és célhőmérséklet
     centered(text, 93, 1, kGray);
   }
+  if (s.svc) {                                                        // szervizmód: figyelmeztető sáv a felső sor helyén
+    cv_->fillRect(0, 0, W, 11, kWarn);
+    snprintf(buf, sizeof(buf), "SZERVIZ %u:%02u", (unsigned)(s.svcLeftS / 60), (unsigned)(s.svcLeftS % 60));
+    queueText((W - textWidth(buf)) / 2, 1, buf, kBlack);
+  } else {
   if (!off) { snprintf(buf, sizeof(buf), "cél %.0f°C%s", (double)target, pendTarget_ >= 0 ? "*" : ""); queueText(2, 2, buf, pendTarget_ >= 0 ? kWarn : kGray); }
   if (time_.isValid()) { const uint16_t m = time_.minuteOfDay(); snprintf(buf, sizeof(buf), "%02u:%02u", m / 60, m % 60); queueText(W - 2 - textWidth(buf), 2, buf, kGray); }
+  }
 
   // három hálózat: kitöltött = bojleren, keret = jelen van, piros keret = tiltva, szürke = nincs feszültség
   for (uint8_t i = 0; i < kSources; ++i) {
